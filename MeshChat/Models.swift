@@ -95,7 +95,6 @@ struct MeshEnvelope: Codable {
 enum ControlMessageType: String, Codable {
     case trustRequest
     case trustAccepted
-    case peerRoster
     /// Periodic "here's who I'm directly connected to" gossip, floods through
     /// the whole mesh so every device can reconstruct the full topology graph.
     case topology
@@ -114,8 +113,6 @@ struct ControlMessage: Codable {
     let type: ControlMessageType
     let senderID: String
     let senderName: String
-    /// Used by .peerRoster to let a host tell others who's reachable through it.
-    let knownPeerIDs: [String]?
     /// Used by .topology: the sender's own current direct connections.
     var directPeers: [TopologyPeerInfo]? = nil
 }
@@ -149,11 +146,19 @@ struct TrustedPeer: Codable, Identifiable, Hashable {
 
 struct DiscoveredPeer: Identifiable, Hashable {
     let id: String
-    let mcPeerID: MCPeerID
+    /// Mutable so a relay-only placeholder entry (see
+    /// MeshManager.syncRelayReachablePeers) can be upgraded to the real
+    /// MCPeerID once we actually discover this peer directly ourselves —
+    /// the placeholder's MCPeerID is a standalone object that was never
+    /// part of any real MCSession handshake, so it can't be used to invite
+    /// or directly send to them.
+    var mcPeerID: MCPeerID
     var groupName: String?
     var state: PeerConnectionState
     var isTrusted: Bool
-    /// True when this peer is reachable only via a relay host, not directly.
+    /// True when this peer is known only through another peer's topology
+    /// gossip — never discovered directly ourselves. Messages still reach
+    /// them via flood relay; direct actions (invite, file transfer) can't.
     var isRelayed: Bool
     var lastSeen: Date
 
@@ -189,8 +194,6 @@ struct InAppBanner: Identifiable, Equatable {
 struct ChatGroup: Codable, Identifiable, Hashable {
     var id: String { name }
     let name: String
-    var isHostRelay: Bool
-    var hostPeerID: String?
 }
 
 // MARK: - Transfer progress (in-memory only, not persisted)
@@ -213,5 +216,4 @@ struct FileTransfer: Identifiable {
 enum DiscoveryKey {
     static let groupName = "groupName"
     static let displayName = "displayName"
-    static let relayMode = "relayMode"
 }

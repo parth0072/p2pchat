@@ -117,15 +117,10 @@ private struct ConnectionSummaryRow: View {
     var body: some View {
         HStack {
             Image(systemName: connectedCount > 0 ? "wifi" : "wifi.slash")
-                .foregroundStyle(connectedCount > 0 ? .green : .secondary)
+                .foregroundStyle(connectedCount > 0 ? Color.green : Color.secondary)
             Text("\(connectedCount) connected")
                 .font(.subheadline)
             Spacer()
-            if mesh.isRelayHost {
-                Label("Relay host", systemImage: "antenna.radiowaves.left.and.right")
-                    .font(.caption)
-                    .foregroundStyle(.blue)
-            }
         }
     }
 }
@@ -254,7 +249,6 @@ private struct GroupSwitcherView: View {
     @Binding var knownGroups: [ChatGroup]
     @Environment(\.dismiss) private var dismiss
     @State private var newGroupName = ""
-    @State private var newGroupIsRelay = false
 
     var body: some View {
         NavigationStack {
@@ -265,28 +259,15 @@ private struct GroupSwitcherView: View {
                             mesh.switchGroup(to: group)
                             dismiss()
                         } label: {
-                            HStack {
-                                Text(group.name)
-                                if group.isHostRelay {
-                                    Spacer()
-                                    Text("relay")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
+                            Text(group.name)
                         }
                     }
                 }
                 Section("New group") {
                     TextField("Group name", text: $newGroupName)
-                    Toggle("Host/relay mode (larger groups)", isOn: $newGroupIsRelay)
                     Button("Create & Join") {
                         guard !newGroupName.isEmpty else { return }
-                        let group = ChatGroup(
-                            name: newGroupName,
-                            isHostRelay: newGroupIsRelay,
-                            hostPeerID: newGroupIsRelay ? DiscoveredPeer.stableID(for: mesh.localPeerID) : nil
-                        )
+                        let group = ChatGroup(name: newGroupName)
                         knownGroups.append(group)
                         mesh.switchGroup(to: group)
                         dismiss()

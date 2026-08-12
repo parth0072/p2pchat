@@ -54,17 +54,13 @@ final class PersistedMessage {
 @Model
 final class PersistedGroup {
     @Attribute(.unique) var name: String
-    var isHostRelay: Bool
-    var hostPeerID: String?
 
     init(from group: ChatGroup) {
         name = group.name
-        isHostRelay = group.isHostRelay
-        hostPeerID = group.hostPeerID
     }
 
     var asChatGroup: ChatGroup {
-        ChatGroup(name: name, isHostRelay: isHostRelay, hostPeerID: hostPeerID)
+        ChatGroup(name: name)
     }
 }
 
@@ -116,10 +112,7 @@ final class MessageStore {
 
     func saveGroup(_ group: ChatGroup) {
         let descriptor = FetchDescriptor<PersistedGroup>(predicate: #Predicate { $0.name == group.name })
-        if let existing = try? context.fetch(descriptor), let first = existing.first {
-            first.isHostRelay = group.isHostRelay
-            first.hostPeerID = group.hostPeerID
-        } else {
+        if (try? context.fetch(descriptor))?.first == nil {
             context.insert(PersistedGroup(from: group))
         }
         trySave()

@@ -7,9 +7,11 @@ import UIKit
 #endif
 
 /// Wraps MCSession + advertiser + browser into a mesh-topology manager.
-/// Every peer advertises and browses simultaneously. Optionally one peer per
-/// group can act as a relay host, forwarding envelopes between peers that
-/// aren't directly connected (used once a group exceeds full-mesh range).
+/// Every peer advertises and browses simultaneously, and every peer floods
+/// envelopes on toward peers it isn't directly connected to (see
+/// floodForward) — there's no single designated relay device, so a message
+/// can hop across several intermediate devices to reach one that's out of
+/// direct range.
 @MainActor
 final class MeshManager: NSObject, ObservableObject {
 
@@ -23,16 +25,21 @@ final class MeshManager: NSObject, ObservableObject {
     @Published var pendingTrustRequest: DiscoveredPeer?
     @Published private(set) var localNetworkAuthorized: Bool = true
     @Published var currentGroup: ChatGroup
-    @Published var isRelayHost: Bool = false
     @Published private(set) var typingPeerIDs: Set<String> = []
 
-    /// Reconstructed mesh topology, gossiped by every peer (not just a relay
-    /// host): topologyEdges[id] = the set of peer IDs that peer is directly
+    /// Reconstructed mesh topology, gossiped by every peer: topologyEdges[id]
+    /// = the set of peer IDs that peer is directly
     /// connected to. Merges what I know locally with what everyone else has
     /// reported about themselves, so the Discovery graph can show the whole
     /// mesh even for peers I've never been in direct range of.
     @Published private(set) var topologyEdges: [String: Set<String>] = [:]
     @Published private(set) var topologyNames: [String: String] = [:]
+
+    /// Last time each ID showed up in topology gossip (as a sender or as
+    /// someone a sender listed as a direct connection). Drives pruning of
+    /// stale relay-only placeholder peers — see syncRelayReachablePeers.
+    private var topologyLastSeen: [String: Date] = [:]
+    private let relayPeerStaleAfter: TimeInterval = 20
 
     /// Set from ChatApp via scenePhase so incoming-message notifications are
     /// skipped while the chat is actually on screen, and fire once it isn't.
@@ -60,11 +67,6 @@ final class MeshManager: NSObject, ObservableObject {
     private var trustStore: TrustStore
     private let onMessagesChanged: ([ChatMessage]) -> Void
     private var messageStore: MessageStore?
-
-    /// Peers we've been told about by a relay host but aren't directly
-    /// connected to. Used to avoid re-browsing for them and to route sends
-    /// through the host instead.
-    private var relayReachablePeerIDs: Set<String> = []
 
     private var reconnectTimer: Timer?
     private var expiryTimer: Timer?
@@ -122,13 +124,10 @@ final class MeshManager: NSObject, ObservableObject {
 
         session = MCSession(peer: peerID, securityIdentity: nil, encryptionPreference: .required)
 
-        var discoveryInfo: [String: String] = [
+        let discoveryInfo: [String: String] = [
             DiscoveryKey.groupName: group.name,
             DiscoveryKey.displayName: displayName
         ]
-        if group.isHostRelay {
-            discoveryInfo[DiscoveryKey.relayMode] = "1"
-        }
 
         advertiser = MCNearbyServiceAdvertiser(
             peer: peerID,
@@ -480,11 +479,10 @@ final class MeshManager: NSObject, ObservableObject {
     func switchGroup(to group: ChatGroup) {
         stop()
         currentGroup = group
-        isRelayHost = group.isHostRelay && group.hostPeerID == DiscoveredPeer.stableID(for: localPeerID)
         discoveredPeers.removeAll()
-        relayReachablePeerIDs.removeAll()
         topologyEdges.removeAll()
         topologyNames.removeAll()
+        topologyLastSeen.removeAll()
 
         rebuildNetworkStack()
         start()
@@ -508,9 +506,9 @@ final class MeshManager: NSObject, ObservableObject {
         localDisplayName = trimmed
         localPeerID = MCPeerID(displayName: trimmed)
         discoveredPeers.removeAll()
-        relayReachablePeerIDs.removeAll()
         topologyEdges.removeAll()
         topologyNames.removeAll()
+        topologyLastSeen.removeAll()
 
         rebuildNetworkStack()
         start()
@@ -523,13 +521,10 @@ final class MeshManager: NSObject, ObservableObject {
         session = MCSession(peer: localPeerID, securityIdentity: nil, encryptionPreference: .required)
         session.delegate = self
 
-        var discoveryInfo: [String: String] = [
+        let discoveryInfo: [String: String] = [
             DiscoveryKey.groupName: currentGroup.name,
             DiscoveryKey.displayName: localDisplayName
         ]
-        if currentGroup.isHostRelay {
-            discoveryInfo[DiscoveryKey.relayMode] = "1"
-        }
         advertiser = MCNearbyServiceAdvertiser(peer: localPeerID, discoveryInfo: discoveryInfo, serviceType: Self.serviceType)
         advertiser.delegate = self
         browser = MCNearbyServiceBrowser(peer: localPeerID, serviceType: Self.serviceType)
@@ -539,6 +534,14 @@ final class MeshManager: NSObject, ObservableObject {
     // MARK: Local notifications
 
     private func requestNotificationAuthorizationIfNeeded() {
+        // Without a delegate, UNUserNotificationCenter never presents a
+        // notification's banner/sound while the app itself is frontmost —
+        // it just silently calls willPresent(_:) and stops, on both iOS and
+        // macOS. That's normally invisible on iOS (a banner is enough), but
+        // on macOS people expect a real system notification even with the
+        // app window open and focused (Messages/Slack/etc. all do this).
+        UNUserNotificationCenter.current().delegate = self
+
         guard !notificationAuthRequested else { return }
         notificationAuthRequested = true
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
@@ -550,25 +553,46 @@ final class MeshManager: NSObject, ObservableObject {
         }
     }
 
-    /// Surfaces a message that just arrived from a peer: a system
-    /// notification while backgrounded, or an in-app banner while
-    /// foregrounded (system notifications are suppressed in that case, and
-    /// silently doing nothing would mean missed messages on any screen other
-    /// than the exact chat that received them) — unless the chat is already
-    /// open, in which case the message is already visible live and a banner
-    /// on top of it would just be redundant. Skipped for the app's own
-    /// outgoing messages and typing indicators either way.
+    /// Surfaces a message that just arrived from a peer. Skipped for the
+    /// app's own outgoing messages, typing indicators, and whenever the
+    /// exact chat that received it is already on screen (the message is
+    /// already visible live there).
+    ///
+    /// - iOS: an in-app banner while foregrounded, a real system
+    ///   notification while backgrounded — matches iOS convention, where
+    ///   foreground alerts are usually suppressed in favor of in-app UI.
+    /// - macOS: always a real system notification, even while the app
+    ///   window is open and frontmost, since that's the normal Mac
+    ///   convention for chat apps — plus the in-app banner as a same-window
+    ///   cue when a different conversation is open.
     private func postLocalNotification(for message: ChatMessage) {
         guard message.senderID != DiscoveredPeer.stableID(for: localPeerID) else { return }
         guard message.type != .typing else { return }
 
-        if isAppActive {
-            if !isChatViewVisible {
-                showInAppBanner(for: message)
-            }
+        // isChatViewVisible only means anything while the app is actually
+        // active — it doesn't reset on background, so it must never gate
+        // the "app is backgrounded" branches below (that was a real bug:
+        // it would silently drop a legitimate background notification for
+        // whichever chat happened to be on screen before backgrounding).
+        if isAppActive, isChatViewVisible {
             return
         }
 
+        #if os(macOS)
+        postSystemNotification(for: message)
+        if isAppActive {
+            showInAppBanner(for: message)
+        }
+        #else
+        if isAppActive {
+            showInAppBanner(for: message)
+        } else {
+            postSystemNotification(for: message)
+        }
+        #endif
+    }
+
+    private func postSystemNotification(for message: ChatMessage) {
         let content = UNMutableNotificationContent()
         content.title = message.senderName
         content.subtitle = currentGroup.name
@@ -615,6 +639,22 @@ final class MeshManager: NSObject, ObservableObject {
     }
 }
 
+// MARK: - UNUserNotificationCenterDelegate
+
+extension MeshManager: UNUserNotificationCenterDelegate {
+    /// Called whenever a notification would otherwise arrive while this app
+    /// is the frontmost app. Returning .banner/.sound/.badge here is what
+    /// actually makes postSystemNotification's macOS "always notify" promise
+    /// true — without this, the system swallows it silently instead.
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound, .badge])
+    }
+}
+
 // MARK: - MCSessionDelegate
 
 extension MeshManager: MCSessionDelegate {
@@ -630,13 +670,17 @@ extension MeshManager: MCSessionDelegate {
                 isRelayed: false,
                 lastSeen: Date()
             )
+            // A real MCSession state change is unambiguous proof of a
+            // direct connection — upgrade a relay-only placeholder (fake
+            // MCPeerID, never actually in session.connectedPeers) to the
+            // real one instead of leaving it stuck pointing at a
+            // placeholder that invites/sends can't actually use directly.
+            peer.mcPeerID = peerID
+            peer.isRelayed = false
             peer.state = PeerConnectionState(from: state)
             peer.lastSeen = Date()
             discoveredPeers[id] = peer
 
-            if state == .connected, isRelayHost {
-                broadcastRoster()
-            }
             // Any connect/disconnect changes my own edges in the mesh graph
             // — announce it right away instead of waiting for the next
             // periodic tick so the Discovery graph feels responsive.
@@ -834,16 +878,34 @@ extension MeshManager: MCSessionDelegate {
         try? session.send(data, toPeers: others, with: .reliable)
     }
 
-    private func broadcastRoster() {
-        let control = ControlMessage(
-            type: .peerRoster,
-            senderID: DiscoveredPeer.stableID(for: localPeerID),
-            senderName: localDisplayName,
-            knownPeerIDs: session.connectedPeers.map(DiscoveredPeer.stableID(for:))
-        )
-        guard let payload = try? JSONEncoder().encode(control) else { return }
-        let envelope = MeshEnvelope(id: UUID(), kind: .control, originPeerID: DiscoveredPeer.stableID(for: localPeerID), targetPeerID: nil, hopCount: 0, payload: payload)
-        sendEnvelope(envelope, deliveryMode: .reliable)
+    /// BFS hop-distance from me to `peerID` over the gossiped topology graph
+    /// (same adjacency data the Discovery view draws) — 0 is me, 1 is a
+    /// direct connection, 2+ means the message has to cross that many
+    /// intermediate devices. Returns nil if I've never heard of this peer at
+    /// all yet (e.g. we're mid-discovery and no gossip has arrived).
+    func hopDistance(to peerID: String) -> Int? {
+        let myID = DiscoveredPeer.stableID(for: localPeerID)
+        guard peerID != myID else { return 0 }
+
+        var adjacency: [String: Set<String>] = topologyEdges
+        for (a, neighbors) in topologyEdges {
+            for b in neighbors {
+                adjacency[b, default: []].insert(a)
+            }
+        }
+
+        var visited: Set<String> = [myID]
+        var queue: [(id: String, hop: Int)] = [(myID, 0)]
+        var head = 0
+        while head < queue.count {
+            let current = queue[head]; head += 1
+            if current.id == peerID { return current.hop }
+            for neighbor in adjacency[current.id] ?? [] where !visited.contains(neighbor) {
+                visited.insert(neighbor)
+                queue.append((neighbor, current.hop + 1))
+            }
+        }
+        return nil
     }
 
     /// Announces my own direct connections to the whole mesh (flooded, see
@@ -852,19 +914,25 @@ extension MeshManager: MCSessionDelegate {
     /// draw the full Discovery graph, not just their own 1-hop neighborhood.
     private func broadcastTopology() {
         let myID = DiscoveredPeer.stableID(for: localPeerID)
-        let directPeers = discoveredPeers.values
-            .filter { $0.state == .connected }
-            .map { TopologyPeerInfo(id: $0.id, name: $0.mcPeerID.displayName) }
+        // Must come from session.connectedPeers (the actual MCSession
+        // truth), not discoveredPeers — the latter also holds relay-only
+        // placeholder entries (state == .connected but never really in
+        // range), and reporting those as "directly connected to me" would
+        // corrupt everyone's topology map with a phantom direct edge.
+        let directPeers = session.connectedPeers.map {
+            TopologyPeerInfo(id: DiscoveredPeer.stableID(for: $0), name: $0.displayName)
+        }
 
         topologyEdges[myID] = Set(directPeers.map(\.id))
         topologyNames[myID] = localDisplayName
+        topologyLastSeen[myID] = Date()
+        syncRelayReachablePeers()
 
         guard !session.connectedPeers.isEmpty else { return }
         let control = ControlMessage(
             type: .topology,
             senderID: myID,
             senderName: localDisplayName,
-            knownPeerIDs: nil,
             directPeers: directPeers
         )
         guard let payload = try? JSONEncoder().encode(control) else { return }
@@ -874,20 +942,67 @@ extension MeshManager: MCSessionDelegate {
 
     private func handleControl(_ control: ControlMessage, from _: MCPeerID) {
         switch control.type {
-        case .peerRoster:
-            guard let ids = control.knownPeerIDs else { return }
-            for id in ids where discoveredPeers[id] == nil {
-                relayReachablePeerIDs.insert(id)
-            }
         case .topology:
             guard let directPeers = control.directPeers else { return }
+            let now = Date()
             topologyNames[control.senderID] = control.senderName
             topologyEdges[control.senderID] = Set(directPeers.map(\.id))
-            for peerInfo in directPeers where topologyNames[peerInfo.id] == nil {
-                topologyNames[peerInfo.id] = peerInfo.name
+            topologyLastSeen[control.senderID] = now
+            for peerInfo in directPeers {
+                if topologyNames[peerInfo.id] == nil {
+                    topologyNames[peerInfo.id] = peerInfo.name
+                }
+                // Being listed in a fresh report is itself evidence they
+                // were alive as of this gossip round, even though we have
+                // no direct report *from* them ourselves.
+                topologyLastSeen[peerInfo.id] = now
             }
+            syncRelayReachablePeers()
         case .trustRequest, .trustAccepted:
             break
+        }
+    }
+
+    /// Every peer we've heard about via topology gossip but have never
+    /// discovered directly ourselves gets a placeholder entry here so it
+    /// shows up in the peer list / Discovery graph as reachable — sendText
+    /// etc. already flood-route to it correctly (see sendDirect) without
+    /// needing a real MCPeerID. Placeholders get upgraded to the real
+    /// MCPeerID automatically the moment we do discover/connect to them
+    /// directly (see the browser/session delegate callbacks), and get
+    /// dropped if nobody's reported them reachable in a while so a peer
+    /// that's actually left the mesh doesn't linger forever as "Connected."
+    private func syncRelayReachablePeers() {
+        let myID = DiscoveredPeer.stableID(for: localPeerID)
+        let now = Date()
+
+        for (id, name) in topologyNames where id != myID {
+            if var existing = discoveredPeers[id] {
+                if existing.isRelayed {
+                    existing.lastSeen = topologyLastSeen[id] ?? now
+                    discoveredPeers[id] = existing
+                }
+                continue
+            }
+            discoveredPeers[id] = DiscoveredPeer(
+                id: id,
+                mcPeerID: MCPeerID(displayName: name),
+                groupName: currentGroup.name,
+                state: .connected,
+                isTrusted: trustStore.isTrusted(id),
+                isRelayed: true,
+                lastSeen: topologyLastSeen[id] ?? now
+            )
+        }
+
+        for (id, peer) in discoveredPeers where peer.isRelayed {
+            let lastSeen = topologyLastSeen[id] ?? peer.lastSeen
+            if now.timeIntervalSince(lastSeen) > relayPeerStaleAfter {
+                discoveredPeers.removeValue(forKey: id)
+                topologyNames.removeValue(forKey: id)
+                topologyEdges.removeValue(forKey: id)
+                topologyLastSeen.removeValue(forKey: id)
+            }
         }
     }
 }
@@ -935,6 +1050,7 @@ extension MeshManager: MCNearbyServiceBrowserDelegate {
             let groupName = info?[DiscoveryKey.groupName]
             guard groupName == nil || groupName == currentGroup.name else { return }
 
+            let wasRelayOnly = discoveredPeers[id]?.isRelayed ?? false
             var peer = discoveredPeers[id] ?? DiscoveredPeer(
                 id: id,
                 mcPeerID: peerID,
@@ -944,6 +1060,18 @@ extension MeshManager: MCNearbyServiceBrowserDelegate {
                 isRelayed: false,
                 lastSeen: Date()
             )
+            // Actually finding this peer nearby is unambiguous proof it's
+            // directly reachable — upgrade a relay-only placeholder (fake
+            // MCPeerID, and a "Connected" state that was never backed by a
+            // real MCSession link) to the genuine one. Being *found* isn't
+            // the same as being *connected* though, so drop back to
+            // .notConnected and let the normal trust/invite flow below (or
+            // a manual tap) establish the real session.
+            if wasRelayOnly {
+                peer.mcPeerID = peerID
+                peer.isRelayed = false
+                peer.state = .notConnected
+            }
             peer.groupName = groupName
             peer.lastSeen = Date()
             peer.isTrusted = trustStore.isTrusted(id)

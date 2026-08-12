@@ -44,11 +44,11 @@ Before running:
 - **Reconnection**: an 8s timer re-invites any known/trusted peer sitting at `.notConnected` that's still in `discoveredPeers`. Messages are deduplicated by `UUID` on receipt, so a re-invite never doubles up history.
 - **Messaging**: text/control messages are wrapped in a `MeshEnvelope` (adds hop count + origin for relay mode) and sent via `session.send(_:toPeers:with:)`, `.reliable` for chat/control, `.unreliable` for typing indicators.
 - **Files/video**: `session.sendResource(at:withName:toPeer:withCompletionHandler:)` handles chunking/resumability; `Progress` is observed via KVO and surfaced in the transfer bar. Received resources move into `Documents/Received/`.
-- **Relay mode**: when a group is created with "Host/relay mode" on, the creating device sets `isRelayHost = true` and rebroadcasts any envelope it receives to its other connected peers (hop-limited to 3), letting devices that aren't directly linked still exchange messages. Non-host peers just behave as normal mesh nodes.
+- **Multi-hop relay**: every peer forwards any envelope not addressed to it one hop closer to its target (hop-limited dynamically to the known mesh size), letting devices that aren't directly linked still exchange messages. There's no designated relay host — all peers behave the same way.
 - **Persistence**: `MessageStore` (SwiftData) saves every appended message keyed by `groupID`; `MeshManager.loadPersistedHistory(from:)` hydrates history on launch and on group switch, deduped by message `id`.
 
 ## Known simplifications (flagged, not hidden)
 
 - Trust identity is `MCPeerID.displayName`-based since there's no auth layer — spoofing a display name is possible on a local network. Acceptable for the "no login" requirement, but worth knowing.
 - The pending-invitation handler map lives in a small `MainActor`-isolated file-private store (`pendingInvitationHandlersStorage`) rather than as a stored property, to keep the non-Sendable `MCSession` completion closure out of the `@Published`/Combine graph. Functionally equivalent to an instance dictionary.
-- Relay mode forwards on a hop-count limit rather than a full routing table — sufficient for the 15–20 peer target in the spec, not a general mesh router.
+- Relay forwarding uses a hop-count limit rather than a full routing table — sufficient for the 15–20 peer target in the spec, not a general mesh router.

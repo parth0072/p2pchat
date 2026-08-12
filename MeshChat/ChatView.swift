@@ -170,6 +170,55 @@ struct ChatView: View {
     }
 
     private var composer: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            routeIndicator
+            if peer.isRelayed {
+                Text("\(peer.mcPeerID.displayName) is reachable via relay — text works, but files/photos need a direct connection.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+            }
+            composerRow
+        }
+    }
+
+    /// Live route summary for this peer, recomputed from the gossiped mesh
+    /// topology (see MeshManager.hopDistance) every time it changes — a
+    /// direct 1-hop link vs. a message that has to cross other devices to
+    /// get here are very different in practice (latency, and file transfers
+    /// only work when it's direct), so this stays visible right above the
+    /// composer instead of being buried in the Discovery graph.
+    private var routeIndicator: some View {
+        HStack(spacing: 4) {
+            Image(systemName: routeIsDirect ? "arrow.right" : "arrow.triangle.branch")
+                .font(.caption2)
+            Text(routeLabel)
+                .font(.caption2)
+        }
+        .foregroundStyle(routeIsDirect ? Color.secondary : Color.orange)
+        .padding(.horizontal, 8)
+    }
+
+    private var routeHopCount: Int? {
+        mesh.hopDistance(to: peer.id)
+    }
+
+    private var routeIsDirect: Bool {
+        (routeHopCount ?? .max) <= 1
+    }
+
+    private var routeLabel: String {
+        switch routeHopCount {
+        case nil:
+            return peer.state == .connecting ? "Connecting…" : "Route unknown"
+        case 0, 1:
+            return "Direct connection"
+        case let hop?:
+            return "Multi-hop · \(hop) hops via mesh"
+        }
+    }
+
+    private var composerRow: some View {
         HStack(spacing: 8) {
             Button {
                 showingAttachmentPanel = true
@@ -180,6 +229,8 @@ struct ChatView: View {
             }
             .frame(width: composerTapTarget, height: composerTapTarget)
             .contentShape(Rectangle())
+            .disabled(peer.isRelayed)
+            .opacity(peer.isRelayed ? 0.4 : 1)
 
             TextField("Message", text: $draft, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
@@ -390,7 +441,7 @@ private struct MessageBubble: View {
             }
             .padding(10)
             .background(isMine ? Color.accentColor.opacity(0.85) : Color.gray.opacity(0.2))
-            .foregroundStyle(isMine ? .white : .primary)
+            .foregroundStyle(isMine ? Color.white : Color.primary)
             .clipShape(RoundedRectangle(cornerRadius: 14))
             if !isMine { Spacer(minLength: 40) }
         }

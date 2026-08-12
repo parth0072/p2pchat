@@ -13,7 +13,7 @@ struct ChatApp: App {
         // from the same UserDefaults keys it reads, then reconciled with
         // ProfileStore.profile.displayName once the view appears.
         let displayName = Self.seedDisplayName()
-        let defaultGroup = ChatGroup(name: "General", isHostRelay: false, hostPeerID: nil)
+        let defaultGroup = ChatGroup(name: "General")
         let manager = MeshManager(displayName: displayName, group: defaultGroup)
         _mesh = StateObject(wrappedValue: manager)
     }
@@ -79,7 +79,7 @@ struct RootView: View {
     @ObservedObject var profileStore: ProfileStore
     let store: MessageStore
     @State private var selectedPeer: DiscoveredPeer?
-    @State private var knownGroups: [ChatGroup] = [ChatGroup(name: "General", isHostRelay: false, hostPeerID: nil)]
+    @State private var knownGroups: [ChatGroup] = [ChatGroup(name: "General")]
 
     var body: some View {
         #if os(macOS)
