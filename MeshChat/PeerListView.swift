@@ -9,7 +9,7 @@ struct PeerListView: View {
     @State var showingProfile = false
     @State var showingDiscovery = false
     @State var showingDebug = false
-    @State var knownGroups: [ChatGroup]
+    @Binding var knownGroups: [ChatGroup]
 
     private var sortedPeers: [DiscoveredPeer] {
         mesh.discoveredPeers.values.sorted { $0.mcPeerID.displayName < $1.mcPeerID.displayName }
@@ -33,14 +33,18 @@ struct PeerListView: View {
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(sortedPeers) { peer in
-                        PeerRow(peer: peer, onConnect: {
-                            // Show the raw connect/route log live while the
-                            // handshake is in flight, so a stuck or failed
-                            // connect attempt is visible instead of a
-                            // silent spinner with no explanation.
-                            showingDebug = true
-                            mesh.trust(peer)
-                        })
+                        PeerRow(
+                            peer: peer,
+                            onConnect: {
+                                // Show the raw connect/route log live while the
+                                // handshake is in flight, so a stuck or failed
+                                // connect attempt is visible instead of a
+                                // silent spinner with no explanation.
+                                showingDebug = true
+                                mesh.trust(peer)
+                            },
+                            onForget: { mesh.forget(peer) }
+                        )
                         .tag(peer)
                     }
                 }
@@ -190,6 +194,7 @@ private struct LocalNetworkDeniedRow: View {
 private struct PeerRow: View {
     let peer: DiscoveredPeer
     let onConnect: () -> Void
+    let onForget: () -> Void
 
     var body: some View {
         HStack {
@@ -226,6 +231,23 @@ private struct PeerRow: View {
             }
         }
         .padding(.vertical, 2)
+        .contentShape(Rectangle())
+        .contextMenu {
+            if peer.isTrusted {
+                Button(role: .destructive, action: onForget) {
+                    Label("Forget Device", systemImage: "person.crop.circle.badge.xmark")
+                }
+            }
+        }
+        #if os(iOS)
+        .swipeActions(edge: .trailing) {
+            if peer.isTrusted {
+                Button(role: .destructive, action: onForget) {
+                    Label("Forget", systemImage: "person.crop.circle.badge.xmark")
+                }
+            }
+        }
+        #endif
     }
 
     private func color(for state: PeerConnectionState) -> Color {
@@ -270,11 +292,7 @@ private struct TrustPromptView: View {
                     mesh.resolvePendingTrust(accept: false, peer: peer)
                 }
                 Button(trustDevice ? "Trust & Connect" : "Connect Once") {
-                    if trustDevice {
-                        mesh.resolvePendingTrust(accept: true, peer: peer)
-                    } else {
-                        mesh.resolvePendingTrust(accept: true, peer: peer)
-                    }
+                    mesh.resolvePendingTrust(accept: true, peer: peer, persistTrust: trustDevice)
                 }
                 .buttonStyle(.borderedProminent)
             }

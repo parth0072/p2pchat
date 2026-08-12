@@ -103,10 +103,15 @@ enum ControlMessageType: String, Codable {
 /// One edge reported by a .topology broadcast: "the sender is directly
 /// connected to this peer." Carries the name too so a device that has never
 /// been in direct radio range of a far peer can still show its name in the
-/// Discovery graph.
+/// Discovery graph. Also carries that peer's public key (base64 raw
+/// Curve25519 bytes) so end-to-end encryption keys propagate the same way
+/// names do — a peer several hops away, never directly discovered, still
+/// needs its key learned from *someone's* gossip before you can encrypt a
+/// message to them (see MeshManager's peerPublicKeys cache).
 struct TopologyPeerInfo: Codable, Hashable {
     let id: String
     let name: String
+    var publicKey: String? = nil
 }
 
 struct ControlMessage: Codable {
@@ -115,6 +120,11 @@ struct ControlMessage: Codable {
     let senderName: String
     /// Used by .topology: the sender's own current direct connections.
     var directPeers: [TopologyPeerInfo]? = nil
+    /// The sender's own base64 Curve25519 public key — carried on every
+    /// .topology broadcast (which already floods to the whole mesh every
+    /// ~6s) so a device's E2E key reaches every other device the same way
+    /// its name and topology edges do, without a separate handshake message.
+    var senderPublicKey: String? = nil
 }
 
 // MARK: - Peer
@@ -236,4 +246,8 @@ struct FileTransfer: Identifiable {
 enum DiscoveryKey {
     static let groupName = "groupName"
     static let displayName = "displayName"
+    /// Base64 raw Curve25519 public key, advertised in the same Bonjour TXT
+    /// record as the group/display name so a peer's E2E encryption key is
+    /// known the instant it's discovered — no separate handshake needed.
+    static let publicKey = "publicKey"
 }

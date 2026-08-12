@@ -13,7 +13,11 @@ struct ChatApp: App {
         // from the same UserDefaults keys it reads, then reconciled with
         // ProfileStore.profile.displayName once the view appears.
         let displayName = Self.seedDisplayName()
-        let defaultGroup = ChatGroup(name: "General")
+        // Reopen whichever group was active last time instead of always
+        // dropping back to "General" — the group's chat history is already
+        // preserved across launches (SwiftData), so the active group should
+        // be too.
+        let defaultGroup = ChatGroup(name: MeshManager.lastGroupName() ?? "General")
         let manager = MeshManager(displayName: displayName, group: defaultGroup)
         _mesh = StateObject(wrappedValue: manager)
     }
@@ -82,24 +86,44 @@ struct RootView: View {
     @State private var knownGroups: [ChatGroup] = [ChatGroup(name: "General")]
 
     var body: some View {
-        #if os(macOS)
-        NavigationSplitView {
-            PeerListView(mesh: mesh, profileStore: profileStore, selectedPeer: $selectedPeer, knownGroups: knownGroups)
-        } detail: {
-            if let selectedPeer {
-                ChatView(mesh: mesh, peer: selectedPeer, store: store)
-            } else {
-                NoPeerSelectedView(mesh: mesh)
-            }
-        }
-        #else
-        NavigationStack {
-            PeerListView(mesh: mesh, profileStore: profileStore, selectedPeer: $selectedPeer, knownGroups: knownGroups)
-                .navigationDestination(item: $selectedPeer) { peer in
-                    ChatView(mesh: mesh, peer: peer, store: store)
+        Group {
+            #if os(macOS)
+            NavigationSplitView {
+                PeerListView(mesh: mesh, profileStore: profileStore, selectedPeer: $selectedPeer, knownGroups: $knownGroups)
+            } detail: {
+                if let selectedPeer {
+                    ChatView(mesh: mesh, peer: selectedPeer, store: store)
+                } else {
+                    NoPeerSelectedView(mesh: mesh)
                 }
+            }
+            #else
+            NavigationStack {
+                PeerListView(mesh: mesh, profileStore: profileStore, selectedPeer: $selectedPeer, knownGroups: $knownGroups)
+                    .navigationDestination(item: $selectedPeer) { peer in
+                        ChatView(mesh: mesh, peer: peer, store: store)
+                    }
+            }
+            #endif
         }
-        #endif
+        .onAppear(perform: loadKnownGroups)
+    }
+
+    /// Restores every group the user has ever created (persisted via
+    /// MessageStore.saveGroup/PersistedGroup) into the switcher list, plus
+    /// whichever group is currently active — without this, knownGroups
+    /// always reset to just "General" on every relaunch even though the
+    /// chat history and the group itself were still on disk, making a
+    /// custom group look like it had silently vanished.
+    private func loadKnownGroups() {
+        var merged = knownGroups
+        for group in store.allGroups() where !merged.contains(where: { $0.name == group.name }) {
+            merged.append(group)
+        }
+        if !merged.contains(where: { $0.name == mesh.currentGroup.name }) {
+            merged.append(mesh.currentGroup)
+        }
+        knownGroups = merged.sorted { $0.name < $1.name }
     }
 }
 

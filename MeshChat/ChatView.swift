@@ -160,6 +160,13 @@ struct ChatView: View {
                             Text("\(Int(transfer.fractionCompleted * 100))%")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
+                            Button {
+                                mesh.cancelTransfer(transfer.id)
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -194,6 +201,13 @@ struct ChatView: View {
                 .font(.caption2)
             Text(routeLabel)
                 .font(.caption2)
+            // Messages are end-to-end encrypted regardless of route (direct
+            // or multi-hop) — the lock reassures that even relay hops on a
+            // multi-hop path can't read the content, only pass along the
+            // sealed envelope.
+            Image(systemName: "lock.fill")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
         .foregroundStyle(routeIsDirect ? Color.secondary : Color.orange)
         .padding(.horizontal, 8)

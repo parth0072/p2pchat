@@ -3,6 +3,7 @@ import MultipeerConnectivity
 import Combine
 import UserNotifications
 import os
+import CryptoKit
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -13,6 +14,15 @@ import UIKit
 /// floodForward) — there's no single designated relay device, so a message
 /// can hop across several intermediate devices to reach one that's out of
 /// direct range.
+///
+/// Chat messages are end-to-end encrypted on top of that (see
+/// EncryptionManager/IdentityKeyStore): MCSession's built-in
+/// encryptionPreference only protects each hop's own link, so without this,
+/// any intermediate relay device — not just the sender and final recipient
+/// — could read a message's plaintext just by being on the routing path.
+/// Only .chatMessage payloads get this treatment; .control (topology
+/// gossip) has no single recipient and carries no user content, so it stays
+/// as plaintext JSON, still protected hop-to-hop by MCSession itself.
 @MainActor
 final class MeshManager: NSObject, ObservableObject {
 
@@ -81,6 +91,31 @@ final class MeshManager: NSObject, ObservableObject {
     private var topologyTimer: Timer?
     private let knownInvitees = NSMutableSet() // avoid duplicate invites in-flight
     private var notificationAuthRequested = false
+
+    // MARK: End-to-end encryption
+
+    private let identity = IdentityKeyStore()
+    private lazy var encryption = EncryptionManager(identity: identity)
+
+    /// Every peer's Curve25519 public key we've learned so far, keyed by
+    /// stable peer ID — from discoveryInfo on direct discovery, or from
+    /// topology gossip for peers only ever known via relay. Required before
+    /// we can encrypt anything to (or decrypt anything from) that peer.
+    private var peerPublicKeys: [String: Curve25519.KeyAgreement.PublicKey] = [:]
+
+    /// Records a peer's public key, and — if it's *different* from
+    /// whatever we already had cached for them (e.g. they reinstalled and
+    /// generated a fresh identity) — invalidates any derived shared secret
+    /// so it gets recomputed against the new key instead of silently
+    /// failing to decrypt forever.
+    private func learnPublicKey(_ base64: String?, for peerID: String) {
+        guard let base64, let key = EncryptionManager.decodePublicKey(base64) else { return }
+        if let existing = peerPublicKeys[peerID], existing.rawRepresentation == key.rawRepresentation {
+            return
+        }
+        peerPublicKeys[peerID] = key
+        encryption.forgetSharedKey(peerID: peerID)
+    }
 
     /// Envelope IDs already relayed, so a flooded envelope that loops back
     /// around the mesh (any cycle in the connection graph) gets dropped
@@ -178,12 +213,14 @@ final class MeshManager: NSObject, ObservableObject {
         self.currentGroup = group
         self.trustStore = trustStore
         self.onMessagesChanged = onMessagesChanged
+        UserDefaults.standard.set(group.name, forKey: Self.lastGroupNameKey)
 
         session = MCSession(peer: peerID, securityIdentity: nil, encryptionPreference: .required)
 
         let discoveryInfo: [String: String] = [
             DiscoveryKey.groupName: group.name,
-            DiscoveryKey.displayName: displayName
+            DiscoveryKey.displayName: displayName,
+            DiscoveryKey.publicKey: identity.publicKeyBase64
         ]
 
         advertiser = MCNearbyServiceAdvertiser(
@@ -316,16 +353,20 @@ final class MeshManager: NSObject, ObservableObject {
 
     // MARK: Trust
 
-    /// Marks a peer trusted without inviting. Used when we're accepting an
-    /// *inbound* invitation — the invitationHandler passed to the advertiser
-    /// delegate already joins the session, so also calling invite() here
-    /// would fire a redundant outbound invite at the same peer and race with
-    /// the connection that's already being established.
-    private func markTrusted(_ peer: DiscoveredPeer) {
-        trustStore.trust(peerID: peer.id, displayName: peer.mcPeerID.displayName)
+    /// Clears a pending inbound trust prompt and, if `persist` is true,
+    /// remembers the peer in TrustStore so future launches/reconnects
+    /// auto-accept them without asking again. `persist: false` is what
+    /// backs "Connect Once" — the session is allowed through right now, but
+    /// nothing is written to disk, so this peer still shows "· untrusted"
+    /// and still prompts next time. Used both for the *inbound* invitation
+    /// path (advertiser already joins the session via its own handler) and
+    /// the outbound one (see trust(_:) below).
+    private func markTrusted(_ peer: DiscoveredPeer, persist: Bool) {
         if pendingTrustRequest?.id == peer.id {
             pendingTrustRequest = nil
         }
+        guard persist else { return }
+        trustStore.trust(peerID: peer.id, displayName: peer.mcPeerID.displayName)
         discoveredPeers[peer.id]?.isTrusted = true
     }
 
@@ -333,7 +374,7 @@ final class MeshManager: NSObject, ObservableObject {
     /// marks trusted and actively sends the invite, since at this point
     /// nothing else is going to.
     func trust(_ peer: DiscoveredPeer) {
-        markTrusted(peer)
+        markTrusted(peer, persist: true)
         if discoveredPeers[peer.id]?.state == .notConnected {
             discoveredPeers[peer.id]?.state = .connecting
         }
@@ -363,6 +404,20 @@ final class MeshManager: NSObject, ObservableObject {
         if pendingTrustRequest?.id == peer.id {
             pendingTrustRequest = nil
         }
+    }
+
+    /// Revokes trust for a previously-trusted peer so they no longer
+    /// auto-connect on rediscovery or relaunch — they'll go through the
+    /// trust prompt again next time, same as any stranger. Note: MCSession
+    /// has no API to drop a single peer's connection without tearing down
+    /// the whole session, so if they're connected right now this doesn't
+    /// sever that live link; it only stops the *next* connection from
+    /// auto-happening.
+    func forget(_ peer: DiscoveredPeer) {
+        trustStore.untrust(peerID: peer.id)
+        discoveredPeers[peer.id]?.isTrusted = false
+        resetReconnectBackoff(for: peer.id)
+        log(.trust, "Forgot \(peer.mcPeerID.displayName) — won't auto-connect next time")
     }
 
     // MARK: Invitations
@@ -439,7 +494,22 @@ final class MeshManager: NSObject, ObservableObject {
     }
 
     private func sendChatMessage(_ message: ChatMessage, to peer: DiscoveredPeer, deliveryMode: MCSessionSendDataMode) {
-        guard let payload = try? JSONEncoder().encode(message) else { return }
+        guard let plaintext = try? JSONEncoder().encode(message) else { return }
+        // No fallback to plaintext here, ever — if we don't have the
+        // recipient's public key yet (haven't discovered them directly and
+        // no topology gossip has carried it to us), the message just isn't
+        // sendable yet rather than going out unencrypted. Keys normally
+        // arrive within one discovery/gossip cycle of a peer becoming
+        // reachable at all.
+        guard let peerKey = peerPublicKeys[peer.id] else {
+            log(.error, "Can't send to \(peer.mcPeerID.displayName): no encryption key known yet")
+            return
+        }
+        let myID = DiscoveredPeer.stableID(for: localPeerID)
+        guard let payload = encryption.encrypt(plaintext, for: peer.id, peerPublicKey: peerKey, myID: myID) else {
+            log(.error, "Encryption failed for message to \(peer.mcPeerID.displayName)")
+            return
+        }
         let envelope = MeshEnvelope(
             id: UUID(),
             kind: .chatMessage,
@@ -540,9 +610,14 @@ final class MeshManager: NSObject, ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 if let error {
-                    self.activeTransfers[transferID]?.status = .failed
+                    let wasCancelled = self.explicitlyCancelledTransferIDs.contains(transferID)
+                    self.activeTransfers[transferID]?.status = wasCancelled ? .cancelled : .failed
                     self.scheduleTransferCleanup(transferID: transferID)
-                    self.log(.error, "File send to \(mcPeerID.displayName) failed: \(error.localizedDescription)")
+                    if wasCancelled {
+                        self.log(.route, "File send to \(mcPeerID.displayName) cancelled")
+                    } else {
+                        self.log(.error, "File send to \(mcPeerID.displayName) failed: \(error.localizedDescription)")
+                    }
                 } else {
                     self.activeTransfers[transferID]?.status = .completed
                     self.activeTransfers[transferID]?.fractionCompleted = 1
@@ -566,12 +641,38 @@ final class MeshManager: NSObject, ObservableObject {
         }
 
         if let progress {
+            activeProgresses[transferID] = progress
             observeProgress(progress, transferID: transferID)
         }
         return progress
     }
 
     private var progressObservers: [UUID: NSKeyValueObservation] = [:]
+
+    /// The live Progress for each in-flight send/receive, kept around so
+    /// cancelTransfer(_:) has something to actually call .cancel() on —
+    /// sendResource's return value and the didStartReceivingResourceWithName
+    /// delegate callback both hand us a cancellable Progress, but neither
+    /// was ever retained before, so there was no way to act on it.
+    private var activeProgresses: [UUID: Progress] = [:]
+
+    /// IDs cancelled by the user, checked in the completion handlers so a
+    /// cancelled transfer reports FileTransfer.Status.cancelled instead of
+    /// .failed — MultipeerConnectivity's own error for a cancelled transfer
+    /// isn't guaranteed to be distinguishable from a genuine failure across
+    /// OS versions, so this is tracked explicitly instead of pattern
+    /// matching on NSError codes.
+    private var explicitlyCancelledTransferIDs: Set<UUID> = []
+
+    /// Cancels an in-progress file transfer (send or receive) by ID.
+    /// Progress.cancel() is a documented, supported MultipeerConnectivity
+    /// operation for both directions.
+    func cancelTransfer(_ transferID: UUID) {
+        guard let progress = activeProgresses[transferID] else { return }
+        explicitlyCancelledTransferIDs.insert(transferID)
+        progress.cancel()
+        log(.route, "Cancelled transfer \(transferID)")
+    }
 
     /// Drops a finished/failed transfer out of activeTransfers (and its KVO
     /// observer) shortly after it settles, so the dictionary doesn't grow
@@ -581,6 +682,8 @@ final class MeshManager: NSObject, ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
             self?.activeTransfers.removeValue(forKey: transferID)
             self?.progressObservers.removeValue(forKey: transferID)
+            self?.activeProgresses.removeValue(forKey: transferID)
+            self?.explicitlyCancelledTransferIDs.remove(transferID)
         }
     }
 
@@ -603,9 +706,20 @@ final class MeshManager: NSObject, ObservableObject {
 
     // MARK: Group / relay switching
 
+    /// The name of whichever group was active last time the app ran, so a
+    /// relaunch reopens the same conversation instead of always dropping
+    /// back to "General" — read by ChatApp when seeding MeshManager's
+    /// initial group, before this class has even been constructed.
+    private static let lastGroupNameKey = "app-chat.lastGroupName"
+
+    static func lastGroupName() -> String? {
+        UserDefaults.standard.string(forKey: lastGroupNameKey)
+    }
+
     func switchGroup(to group: ChatGroup) {
         stop()
         currentGroup = group
+        UserDefaults.standard.set(group.name, forKey: Self.lastGroupNameKey)
         discoveredPeers.removeAll()
         topologyEdges.removeAll()
         topologyNames.removeAll()
@@ -654,7 +768,8 @@ final class MeshManager: NSObject, ObservableObject {
 
         let discoveryInfo: [String: String] = [
             DiscoveryKey.groupName: currentGroup.name,
-            DiscoveryKey.displayName: localDisplayName
+            DiscoveryKey.displayName: localDisplayName,
+            DiscoveryKey.publicKey: identity.publicKeyBase64
         ]
         advertiser = MCNearbyServiceAdvertiser(peer: localPeerID, discoveryInfo: discoveryInfo, serviceType: Self.serviceType)
         advertiser.delegate = self
@@ -858,6 +973,7 @@ extension MeshManager: MCSessionDelegate {
                 estimatedSecondsRemaining: nil
             )
             activeTransfers[transferID] = transfer
+            activeProgresses[transferID] = progress
             receivingTransferIDs[receivingTransferKey(peerID: peerID, resourceName: resourceName)] = transferID
             observeProgress(progress, transferID: transferID)
         }
@@ -869,9 +985,14 @@ extension MeshManager: MCSessionDelegate {
             let transferID = receivingTransferIDs.removeValue(forKey: key)
 
             guard let localURL, error == nil else {
-                log(.error, "File receive from \(peerID.displayName) failed: \(error?.localizedDescription ?? "unknown")")
+                let wasCancelled = transferID.map { explicitlyCancelledTransferIDs.contains($0) } ?? false
+                if wasCancelled {
+                    log(.route, "File receive from \(peerID.displayName) cancelled")
+                } else {
+                    log(.error, "File receive from \(peerID.displayName) failed: \(error?.localizedDescription ?? "unknown")")
+                }
                 if let transferID {
-                    activeTransfers[transferID]?.status = .failed
+                    activeTransfers[transferID]?.status = wasCancelled ? .cancelled : .failed
                     scheduleTransferCleanup(transferID: transferID)
                 }
                 return
@@ -941,7 +1062,6 @@ extension MeshManager: MCSessionDelegate {
     private func handle(_ envelope: MeshEnvelope, from peerID: MCPeerID) {
         switch envelope.kind {
         case .chatMessage:
-            guard let message = try? JSONDecoder().decode(ChatMessage.self, from: envelope.payload) else { return }
             let myID = DiscoveredPeer.stableID(for: localPeerID)
             // targetPeerID is nil only for old/legacy envelopes; every
             // message sent by the current code has it set to the intended
@@ -950,31 +1070,41 @@ extension MeshManager: MCSessionDelegate {
             // showing/relaying everything to everyone.
             let isForMe = envelope.targetPeerID == nil || envelope.targetPeerID == myID
 
+            // Security-critical ordering: a relay hop that isn't the
+            // recipient must never attempt to decrypt at all — the payload
+            // is end-to-end encrypted to the recipient's key, so it just
+            // gets passed along still sealed. Only the actual recipient
+            // reaches the decrypt call below. This is what makes relay hops
+            // unable to read message content, not just "prefer not to."
+            guard isForMe else {
+                floodForward(envelope, excluding: peerID)
+                return
+            }
+
+            guard let senderKey = peerPublicKeys[envelope.originPeerID] else {
+                log(.error, "Can't decrypt message from \(displayName(for: envelope.originPeerID)): no key known yet")
+                return
+            }
+            guard let plaintext = encryption.decrypt(envelope.payload, from: envelope.originPeerID, peerPublicKey: senderKey, myID: myID) else {
+                log(.error, "Failed to decrypt message from \(displayName(for: envelope.originPeerID)) — dropped")
+                return
+            }
+            guard let message = try? JSONDecoder().decode(ChatMessage.self, from: plaintext) else { return }
+
             if message.type == .typing {
-                if isForMe {
-                    if message.content == "1" {
-                        typingPeerIDs.insert(message.senderID)
-                    } else {
-                        typingPeerIDs.remove(message.senderID)
-                    }
+                if message.content == "1" {
+                    typingPeerIDs.insert(message.senderID)
                 } else {
-                    floodForward(envelope, excluding: peerID)
+                    typingPeerIDs.remove(message.senderID)
                 }
                 return
             }
 
-            if isForMe, !messages.contains(where: { $0.id == message.id }) {
+            if !messages.contains(where: { $0.id == message.id }) {
                 appendLocal(message)
                 postLocalNotification(for: message)
                 let route = envelope.hopCount == 0 ? "direct" : "via relay, \(envelope.hopCount) hop(s)"
                 log(.route, "Received from \(message.senderName): \(route)")
-            }
-            // Every peer helps relay now, not just a designated host — keep
-            // forwarding envelopes addressed to someone else one hop closer
-            // to them, so a message can cross several intermediate devices
-            // to reach a peer that's out of direct range.
-            if let targetID = envelope.targetPeerID, targetID != myID {
-                floodForward(envelope, excluding: peerID)
             }
         case .control:
             guard let control = try? JSONDecoder().decode(ControlMessage.self, from: envelope.payload) else { return }
@@ -1093,8 +1223,13 @@ extension MeshManager: MCSessionDelegate {
         // placeholder entries (state == .connected but never really in
         // range), and reporting those as "directly connected to me" would
         // corrupt everyone's topology map with a phantom direct edge.
-        let directPeers = session.connectedPeers.map {
-            TopologyPeerInfo(id: DiscoveredPeer.stableID(for: $0), name: $0.displayName)
+        let directPeers = session.connectedPeers.map { mcPeerID -> TopologyPeerInfo in
+            let id = DiscoveredPeer.stableID(for: mcPeerID)
+            return TopologyPeerInfo(
+                id: id,
+                name: mcPeerID.displayName,
+                publicKey: peerPublicKeys[id]?.rawRepresentation.base64EncodedString()
+            )
         }
 
         topologyEdges[myID] = Set(directPeers.map(\.id))
@@ -1107,7 +1242,8 @@ extension MeshManager: MCSessionDelegate {
             type: .topology,
             senderID: myID,
             senderName: localDisplayName,
-            directPeers: directPeers
+            directPeers: directPeers,
+            senderPublicKey: encryption.publicKeyBase64
         )
         guard let payload = try? JSONEncoder().encode(control) else { return }
         let envelope = MeshEnvelope(id: UUID(), kind: .control, originPeerID: myID, targetPeerID: nil, hopCount: 0, payload: payload)
@@ -1122,6 +1258,7 @@ extension MeshManager: MCSessionDelegate {
             topologyNames[control.senderID] = control.senderName
             topologyEdges[control.senderID] = Set(directPeers.map(\.id))
             topologyLastSeen[control.senderID] = now
+            learnPublicKey(control.senderPublicKey, for: control.senderID)
             for peerInfo in directPeers {
                 if topologyNames[peerInfo.id] == nil {
                     topologyNames[peerInfo.id] = peerInfo.name
@@ -1130,6 +1267,11 @@ extension MeshManager: MCSessionDelegate {
                 // were alive as of this gossip round, even though we have
                 // no direct report *from* them ourselves.
                 topologyLastSeen[peerInfo.id] = now
+                // Propagates E2E keys the same way names propagate — this is
+                // how a peer several hops away, never directly discovered,
+                // still gets its key learned before we ever need to encrypt
+                // a message to them.
+                learnPublicKey(peerInfo.publicKey, for: peerInfo.id)
             }
             syncRelayReachablePeers()
         case .trustRequest, .trustAccepted:
@@ -1288,6 +1430,7 @@ extension MeshManager: MCNearbyServiceBrowserDelegate {
             peer.lastSeen = Date()
             peer.isTrusted = trustStore.isTrusted(id)
             discoveredPeers[id] = peer
+            learnPublicKey(info?[DiscoveryKey.publicKey], for: id)
 
             if !wasAlreadyKnown || wasRelayOnly {
                 log(.discovery, "Found \(peerID.displayName) nearby\(peer.isTrusted ? " (trusted)" : "")")
@@ -1302,6 +1445,17 @@ extension MeshManager: MCNearbyServiceBrowserDelegate {
     nonisolated func browser(_ browser: MCNearbyServiceBrowser, lostPeer peerID: MCPeerID) {
         Task { @MainActor in
             let id = DiscoveredPeer.stableID(for: peerID)
+            // lostPeer only means Bonjour can no longer see this peer's
+            // advertisement — it says nothing about whether the actual
+            // MCSession link is still up. A momentary Wi-Fi/Bluetooth
+            // rediscovery blip firing this while the session is still fully
+            // connected would otherwise flash a live chat to "Not
+            // connected" for no reason. session.connectedPeers is the real
+            // truth; only downgrade if this peer genuinely isn't in it.
+            guard !session.connectedPeers.contains(peerID) else {
+                log(.discovery, "\(peerID.displayName) dropped out of Bonjour range but the direct connection is still up — ignoring")
+                return
+            }
             discoveredPeers[id]?.state = .notConnected
             log(.discovery, "Lost \(peerID.displayName) (out of range)")
         }
@@ -1326,14 +1480,20 @@ extension MeshManager {
         set { pendingInvitationHandlersStorage = newValue }
     }
 
-    func resolvePendingTrust(accept: Bool, peer: DiscoveredPeer) {
+    /// `persistTrust` distinguishes "Trust & Connect" (remember this device
+    /// for next time) from "Connect Once" (let this specific handshake
+    /// through, forget about it after) — see markTrusted(_:persist:).
+    func resolvePendingTrust(accept: Bool, peer: DiscoveredPeer, persistTrust: Bool = true) {
         guard let handler = pendingInvitationHandlers[peer.id] else { return }
         handler(accept, accept ? session : nil)
         pendingInvitationHandlers[peer.id] = nil
-        log(.trust, accept ? "Accepted \(peer.mcPeerID.displayName)" : "Declined \(peer.mcPeerID.displayName)")
         if accept {
-            markTrusted(peer)
+            log(.trust, persistTrust
+                ? "Accepted \(peer.mcPeerID.displayName) and trusted them for next time"
+                : "Accepted \(peer.mcPeerID.displayName) for this connection only")
+            markTrusted(peer, persist: persistTrust)
         } else {
+            log(.trust, "Declined \(peer.mcPeerID.displayName)")
             decline(peer)
         }
     }

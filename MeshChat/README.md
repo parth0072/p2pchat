@@ -34,6 +34,7 @@ Before running:
 | `PeerListView.swift` | Discovery screen, trust prompt, group switcher |
 | `ChatView.swift` | Message bubbles, attachments, transfer progress, composer |
 | `ChatApp.swift` | App entry point, adaptive root (`NavigationSplitView` on macOS, `NavigationStack` on iOS) |
+| `CryptoIdentity.swift` | Curve25519 identity key (Keychain-backed) + AES-GCM per-peer encrypt/decrypt for end-to-end message encryption |
 | `Info.plist` | The target's actual Info.plist (Bonjour/local network/Bluetooth/photo usage keys) |
 | `MeshChat.entitlements` | Sandbox entitlements applied to the macOS build |
 
@@ -46,9 +47,11 @@ Before running:
 - **Files/video**: `session.sendResource(at:withName:toPeer:withCompletionHandler:)` handles chunking/resumability; `Progress` is observed via KVO and surfaced in the transfer bar. Received resources move into `Documents/Received/`.
 - **Multi-hop relay**: every peer forwards any envelope not addressed to it one hop closer to its target (hop-limited dynamically to the known mesh size), letting devices that aren't directly linked still exchange messages. There's no designated relay host — all peers behave the same way.
 - **Persistence**: `MessageStore` (SwiftData) saves every appended message keyed by `groupID`; `MeshManager.loadPersistedHistory(from:)` hydrates history on launch and on group switch, deduped by message `id`.
+- **End-to-end encryption**: each device generates a Curve25519 key pair once (`IdentityKeyStore`, kept in the Keychain, not UserDefaults) and advertises its public key both in `discoveryInfo["publicKey"]` (for directly-discovered peers) and in every `.topology` gossip broadcast (`TopologyPeerInfo.publicKey` / `ControlMessage.senderPublicKey`), so keys propagate the same way names and routes do — a peer several hops away, never directly discovered, still gets its key learned before you need to message them. `.chatMessage` payloads are sealed with AES-GCM using an ECDH-derived per-peer shared key (`EncryptionManager`) *before* the envelope is handed to `sendDirect`/`floodForward`; relay hops check `isForMe` from envelope metadata alone and forward still-sealed envelopes without ever attempting to decrypt content not addressed to them. `.control`/topology messages stay in the clear — they have no single recipient and carry no message content, only routing/gossip metadata.
 
 ## Known simplifications (flagged, not hidden)
 
 - Trust identity is `MCPeerID.displayName`-based since there's no auth layer — spoofing a display name is possible on a local network. Acceptable for the "no login" requirement, but worth knowing.
 - The pending-invitation handler map lives in a small `MainActor`-isolated file-private store (`pendingInvitationHandlersStorage`) rather than as a stored property, to keep the non-Sendable `MCSession` completion closure out of the `@Published`/Combine graph. Functionally equivalent to an instance dictionary.
 - Relay forwarding uses a hop-count limit rather than a full routing table — sufficient for the 15–20 peer target in the spec, not a general mesh router.
+- Encryption uses a long-lived per-install identity key, not per-session ephemeral keys — no Signal/Noise-style forward secrecy. A single compromised private key can decrypt that device's past traffic if an attacker also captured it off the wire. Chosen because multi-hop relay means a message can be in flight for seconds, and rotating keys mid-session would strand it. MultipeerConnectivity's own `encryptionPreference: .required` still protects each hop's link on top of this.
