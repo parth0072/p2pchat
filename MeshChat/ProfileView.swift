@@ -148,8 +148,13 @@ struct ProfileView: View {
             profileStore.clearAvatar()
         }
 
-        if trimmed != profileStore.profile.displayName {
-            profileStore.updateName(trimmed)
+        // Always persist, even if the name is unchanged from the prefilled
+        // default — otherwise tapping Save without editing anything never
+        // writes to storage, and the app asks for a profile again on every
+        // launch (isFirstRun never flips to false).
+        let nameChanged = trimmed != profileStore.profile.displayName
+        profileStore.updateName(trimmed)
+        if nameChanged {
             mesh.updateIdentity(displayName: trimmed)
         }
 

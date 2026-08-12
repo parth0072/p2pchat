@@ -11,7 +11,7 @@ import AppKit
 
 struct ChatView: View {
     @ObservedObject var mesh: MeshManager
-    let peer: DiscoveredPeer?
+    let peer: DiscoveredPeer
     let store: MessageStore
 
     @State private var draft = ""
@@ -23,9 +23,13 @@ struct ChatView: View {
     @State private var largeFileWarning: (url: URL, name: String, size: Int)?
     @FocusState private var isComposerFocused: Bool
 
-    private var groupMessages: [ChatMessage] {
-        mesh.messages
-            .filter { $0.groupID == mesh.currentGroup.name }
+    /// This peer's own 1:1 thread — messages I sent *to* this peer plus
+    /// messages I received *from* this peer, kept separate from every other
+    /// connected device's conversation instead of one merged group feed.
+    private var conversationMessages: [ChatMessage] {
+        let myID = DiscoveredPeer.stableID(for: mesh.localPeerID)
+        return mesh.messages
+            .filter { $0.conversationPartnerID(myID: myID) == peer.id }
             .sorted { $0.timestamp < $1.timestamp }
     }
 
@@ -34,7 +38,7 @@ struct ChatView: View {
             ScrollViewReader { scrollProxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 8) {
-                        ForEach(groupMessages) { message in
+                        ForEach(conversationMessages) { message in
                             MessageBubble(
                                 message: message,
                                 isMine: message.senderID == DiscoveredPeer.stableID(for: mesh.localPeerID),
@@ -42,8 +46,8 @@ struct ChatView: View {
                             )
                             .id(message.id)
                         }
-                        if !mesh.typingPeerIDs.isEmpty {
-                            TypingIndicatorRow(count: mesh.typingPeerIDs.count)
+                        if mesh.typingPeerIDs.contains(peer.id) {
+                            TypingIndicatorRow(name: peer.mcPeerID.displayName)
                         }
                     }
                     .padding()
@@ -55,12 +59,12 @@ struct ChatView: View {
                     // Jump straight to the latest message when the chat
                     // opens — no animation, so it doesn't visibly scroll
                     // through the whole history first.
-                    if let last = groupMessages.last {
+                    if let last = conversationMessages.last {
                         scrollProxy.scrollTo(last.id, anchor: .bottom)
                     }
                 }
-                .onChange(of: groupMessages.count) {
-                    if let last = groupMessages.last {
+                .onChange(of: conversationMessages.count) {
+                    if let last = conversationMessages.last {
                         withAnimation { scrollProxy.scrollTo(last.id, anchor: .bottom) }
                     }
                 }
@@ -68,7 +72,7 @@ struct ChatView: View {
                     // Keep the newest message in view as the keyboard rises,
                     // synced to roughly the keyboard's own animation timing
                     // instead of jumping after the fact.
-                    guard isComposerFocused, let last = groupMessages.last else { return }
+                    guard isComposerFocused, let last = conversationMessages.last else { return }
                     withAnimation(.easeOut(duration: 0.25)) {
                         scrollProxy.scrollTo(last.id, anchor: .bottom)
                     }
@@ -79,7 +83,7 @@ struct ChatView: View {
 
             composer
         }
-        .navigationTitle(peer?.mcPeerID.displayName ?? mesh.currentGroup.name)
+        .navigationTitle(peer.mcPeerID.displayName)
         .onAppear { mesh.isChatViewVisible = true }
         .onDisappear { mesh.isChatViewVisible = false }
         .sheet(item: $previewMessage) { message in
@@ -131,7 +135,7 @@ struct ChatView: View {
         }
         .sheet(isPresented: $showingStickerPicker) {
             StickerPickerView { emoji in
-                mesh.sendSticker(emoji)
+                mesh.sendSticker(emoji, to: peer)
             }
             .presentationDetents([.medium, .large])
         }
@@ -181,7 +185,7 @@ struct ChatView: View {
                 .textFieldStyle(.roundedBorder)
                 .focused($isComposerFocused)
                 .onChange(of: draft) {
-                    mesh.sendTypingIndicator(isTyping: !draft.isEmpty)
+                    mesh.sendTypingIndicator(isTyping: !draft.isEmpty, to: peer)
                 }
                 .onSubmit(send)
 
@@ -219,9 +223,9 @@ struct ChatView: View {
     private func send() {
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        mesh.sendText(trimmed)
+        mesh.sendText(trimmed, to: peer)
         draft = ""
-        mesh.sendTypingIndicator(isTyping: false)
+        mesh.sendTypingIndicator(isTyping: false, to: peer)
     }
 
     private func handlePickedFile(url: URL) {
@@ -237,8 +241,7 @@ struct ChatView: View {
     }
 
     private func sendFile(url: URL, name: String) {
-        guard let target = peer?.mcPeerID else { return }
-        mesh.sendResource(at: url, named: name, toPeer: target)
+        mesh.sendResource(at: url, named: name, toPeer: peer.mcPeerID)
     }
 
     #if os(macOS)
@@ -490,11 +493,11 @@ private struct MessageBubble: View {
 }
 
 private struct TypingIndicatorRow: View {
-    let count: Int
+    let name: String
 
     var body: some View {
         HStack {
-            Text(count == 1 ? "Someone is typing…" : "\(count) people are typing…")
+            Text("\(name) is typing…")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Spacer()

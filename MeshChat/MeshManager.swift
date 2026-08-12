@@ -238,53 +238,73 @@ final class MeshManager: NSObject, ObservableObject {
 
     // MARK: Sending text
 
-    func sendText(_ text: String) {
+    /// Every send below is a direct 1:1 message to a specific peer, not a
+    /// broadcast — each connected device gets its own separate conversation
+    /// thread (see ChatMessage.conversationPartnerID / ChatView's filtering)
+    /// instead of one merged feed shared by everyone in the group.
+    func sendText(_ text: String, to peer: DiscoveredPeer) {
         let message = ChatMessage(
             senderID: DiscoveredPeer.stableID(for: localPeerID),
             senderName: localDisplayName,
             type: .text,
             content: text,
-            groupID: currentGroup.name
+            groupID: currentGroup.name,
+            recipientPeerID: peer.id
         )
         appendLocal(message)
-        broadcast(message)
+        sendChatMessage(message, to: peer, deliveryMode: .reliable)
     }
 
     /// Stickers are just an emoji glyph sent as its own message type so the
     /// UI can render it large and without a bubble background, Telegram-style.
-    func sendSticker(_ emoji: String) {
+    func sendSticker(_ emoji: String, to peer: DiscoveredPeer) {
         let message = ChatMessage(
             senderID: DiscoveredPeer.stableID(for: localPeerID),
             senderName: localDisplayName,
             type: .sticker,
             content: emoji,
-            groupID: currentGroup.name
+            groupID: currentGroup.name,
+            recipientPeerID: peer.id
         )
         appendLocal(message)
-        broadcast(message)
+        sendChatMessage(message, to: peer, deliveryMode: .reliable)
     }
 
-    func sendTypingIndicator(isTyping: Bool) {
-        guard let data = try? JSONEncoder().encode(
-            ChatMessage(
-                senderID: DiscoveredPeer.stableID(for: localPeerID),
-                senderName: localDisplayName,
-                type: .typing,
-                content: isTyping ? "1" : "0",
-                groupID: currentGroup.name
-            )
-        ) else { return }
+    func sendTypingIndicator(isTyping: Bool, to peer: DiscoveredPeer) {
+        let message = ChatMessage(
+            senderID: DiscoveredPeer.stableID(for: localPeerID),
+            senderName: localDisplayName,
+            type: .typing,
+            content: isTyping ? "1" : "0",
+            groupID: currentGroup.name,
+            recipientPeerID: peer.id
+        )
+        sendChatMessage(message, to: peer, deliveryMode: .unreliable)
+    }
+
+    private func sendChatMessage(_ message: ChatMessage, to peer: DiscoveredPeer, deliveryMode: MCSessionSendDataMode) {
+        guard let payload = try? JSONEncoder().encode(message) else { return }
         let envelope = MeshEnvelope(
             kind: .chatMessage,
-            originPeerID: DiscoveredPeer.stableID(for: localPeerID),
-            targetPeerID: nil,
+            originPeerID: message.senderID,
+            targetPeerID: peer.id,
             hopCount: 0,
-            payload: data
+            payload: payload
         )
-        guard let envelopeData = try? JSONEncoder().encode(envelope) else { return }
-        let connected = session.connectedPeers
-        guard !connected.isEmpty else { return }
-        try? session.send(envelopeData, toPeers: connected, with: .unreliable)
+        sendDirect(envelope, to: peer.mcPeerID, deliveryMode: deliveryMode)
+    }
+
+    /// Sends straight to the peer if directly connected; otherwise falls
+    /// back to a best-effort broadcast to whoever we *are* connected to
+    /// (with targetPeerID already set on the envelope) so a relay host among
+    /// them can pick it up and forward it on via relayForward.
+    private func sendDirect(_ envelope: MeshEnvelope, to mcPeerID: MCPeerID, deliveryMode: MCSessionSendDataMode) {
+        guard let data = try? JSONEncoder().encode(envelope) else { return }
+        if session.connectedPeers.contains(mcPeerID) {
+            try? session.send(data, toPeers: [mcPeerID], with: deliveryMode)
+        } else if !session.connectedPeers.isEmpty {
+            try? session.send(data, toPeers: session.connectedPeers, with: deliveryMode)
+        }
     }
 
     private func appendLocal(_ message: ChatMessage) {
@@ -307,18 +327,6 @@ final class MeshManager: NSObject, ObservableObject {
             messages.append(message)
         }
         messages.sort { $0.timestamp < $1.timestamp }
-    }
-
-    private func broadcast(_ message: ChatMessage) {
-        guard let payload = try? JSONEncoder().encode(message) else { return }
-        let envelope = MeshEnvelope(
-            kind: .chatMessage,
-            originPeerID: message.senderID,
-            targetPeerID: nil,
-            hopCount: 0,
-            payload: payload
-        )
-        sendEnvelope(envelope, deliveryMode: .reliable)
     }
 
     private func sendEnvelope(_ envelope: MeshEnvelope, deliveryMode: MCSessionSendDataMode) {
@@ -367,6 +375,7 @@ final class MeshManager: NSObject, ObservableObject {
                         type: type,
                         content: name,
                         groupID: self.currentGroup.name,
+                        recipientPeerID: DiscoveredPeer.stableID(for: mcPeerID),
                         fileName: name,
                         fileSize: (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? nil,
                         localURL: url
@@ -668,22 +677,34 @@ extension MeshManager: MCSessionDelegate {
         switch envelope.kind {
         case .chatMessage:
             guard let message = try? JSONDecoder().decode(ChatMessage.self, from: envelope.payload) else { return }
+            let myID = DiscoveredPeer.stableID(for: localPeerID)
+            // targetPeerID is nil only for old/legacy envelopes; every
+            // message sent by the current code has it set to the intended
+            // recipient, so a relay host can tell "mine to keep" apart from
+            // "someone else's, just pass it on" instead of showing/relaying
+            // everything to everyone.
+            let isForMe = envelope.targetPeerID == nil || envelope.targetPeerID == myID
+
             if message.type == .typing {
-                if message.content == "1" {
-                    typingPeerIDs.insert(message.senderID)
-                } else {
-                    typingPeerIDs.remove(message.senderID)
-                }
-                if isRelayHost {
+                if isForMe {
+                    if message.content == "1" {
+                        typingPeerIDs.insert(message.senderID)
+                    } else {
+                        typingPeerIDs.remove(message.senderID)
+                    }
+                } else if isRelayHost {
                     relayForward(envelope, excluding: peerID)
                 }
                 return
             }
-            if !messages.contains(where: { $0.id == message.id }) {
+
+            if isForMe, !messages.contains(where: { $0.id == message.id }) {
                 appendLocal(message)
                 postLocalNotification(for: message)
             }
-            if isRelayHost {
+            // A relay host keeps forwarding envelopes addressed to someone
+            // else it isn't the final destination for.
+            if isRelayHost, let targetID = envelope.targetPeerID, targetID != myID {
                 relayForward(envelope, excluding: peerID)
             }
         case .control:
@@ -692,8 +713,10 @@ extension MeshManager: MCSessionDelegate {
         }
     }
 
-    /// Host-mode: re-send an envelope (with hopCount bumped) to every other
-    /// connected peer so devices that aren't directly linked still see it.
+    /// Host-mode: re-sends an envelope (with hopCount bumped) toward its
+    /// intended recipient if directly connected to them, or as a best-effort
+    /// broadcast to everyone else otherwise, so devices that aren't directly
+    /// linked to the original sender still receive messages addressed to them.
     private func relayForward(_ envelope: MeshEnvelope, excluding sender: MCPeerID) {
         guard envelope.hopCount < 3 else { return }
         let forwarded = MeshEnvelope(
@@ -704,6 +727,13 @@ extension MeshManager: MCSessionDelegate {
             payload: envelope.payload
         )
         guard let data = try? JSONEncoder().encode(forwarded) else { return }
+
+        if let targetID = envelope.targetPeerID,
+           let targetPeer = session.connectedPeers.first(where: { DiscoveredPeer.stableID(for: $0) == targetID }) {
+            try? session.send(data, toPeers: [targetPeer], with: .reliable)
+            return
+        }
+
         let others = session.connectedPeers.filter { $0 != sender }
         guard !others.isEmpty else { return }
         try? session.send(data, toPeers: others, with: .reliable)

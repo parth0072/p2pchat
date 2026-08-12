@@ -15,6 +15,7 @@ final class PersistedMessage {
     var typeRaw: String
     var content: String
     var groupID: String
+    var recipientPeerID: String?
     var fileName: String?
     var fileSize: Int?
     var localURLString: String?
@@ -27,6 +28,7 @@ final class PersistedMessage {
         typeRaw = message.type.rawValue
         content = message.content
         groupID = message.groupID
+        recipientPeerID = message.recipientPeerID
         fileName = message.fileName
         fileSize = message.fileSize
         localURLString = message.localURL?.absoluteString
@@ -41,6 +43,7 @@ final class PersistedMessage {
             type: MessageType(rawValue: typeRaw) ?? .text,
             content: content,
             groupID: groupID,
+            recipientPeerID: recipientPeerID,
             fileName: fileName,
             fileSize: fileSize,
             localURL: localURLString.flatMap(URL.init(string:))

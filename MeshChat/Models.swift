@@ -21,6 +21,14 @@ struct ChatMessage: Codable, Identifiable, Hashable {
     let content: String
     let groupID: String
 
+    /// The peer this message was addressed to, set only on messages *I*
+    /// sent. Together with senderID this reconstructs "the other person in
+    /// this thread" from either side: for my own messages that's
+    /// recipientPeerID; for messages I received, it's just senderID. Lets
+    /// ChatView show a separate 1:1 conversation per peer instead of one
+    /// merged feed for everyone in the group.
+    var recipientPeerID: String?
+
     var fileName: String?
     var fileSize: Int?
     var localURL: URL?
@@ -33,6 +41,7 @@ struct ChatMessage: Codable, Identifiable, Hashable {
         type: MessageType,
         content: String,
         groupID: String,
+        recipientPeerID: String? = nil,
         fileName: String? = nil,
         fileSize: Int? = nil,
         localURL: URL? = nil
@@ -44,9 +53,16 @@ struct ChatMessage: Codable, Identifiable, Hashable {
         self.type = type
         self.content = content
         self.groupID = groupID
+        self.recipientPeerID = recipientPeerID
         self.fileName = fileName
         self.fileSize = fileSize
         self.localURL = localURL
+    }
+
+    /// The stable ID of "the other participant" in this 1:1 thread, from my
+    /// own perspective (myID = my own stable peer ID).
+    func conversationPartnerID(myID: String) -> String? {
+        senderID == myID ? recipientPeerID : senderID
     }
 }
 
