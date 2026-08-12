@@ -8,6 +8,7 @@ struct PeerListView: View {
     @State var showingGroupSwitcher = false
     @State var showingProfile = false
     @State var showingDiscovery = false
+    @State var showingDebug = false
     @State var knownGroups: [ChatGroup]
 
     private var sortedPeers: [DiscoveredPeer] {
@@ -32,8 +33,15 @@ struct PeerListView: View {
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(sortedPeers) { peer in
-                        PeerRow(peer: peer, onConnect: { mesh.trust(peer) })
-                            .tag(peer)
+                        PeerRow(peer: peer, onConnect: {
+                            // Show the raw connect/route log live while the
+                            // handshake is in flight, so a stuck or failed
+                            // connect attempt is visible instead of a
+                            // silent spinner with no explanation.
+                            showingDebug = true
+                            mesh.trust(peer)
+                        })
+                        .tag(peer)
                     }
                 }
             }
@@ -62,6 +70,13 @@ struct PeerListView: View {
                     Label("Groups", systemImage: "person.3")
                 }
             }
+            ToolbarItem {
+                Button {
+                    showingDebug = true
+                } label: {
+                    Label("Debug", systemImage: "ladybug")
+                }
+            }
             #else
             ToolbarItem(placement: .navigationBarLeading) {
                 Button {
@@ -84,6 +99,13 @@ struct PeerListView: View {
                     Label("Groups", systemImage: "person.3")
                 }
             }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    showingDebug = true
+                } label: {
+                    Label("Debug", systemImage: "ladybug")
+                }
+            }
             #endif
         }
         .sheet(isPresented: $showingGroupSwitcher) {
@@ -95,8 +117,26 @@ struct PeerListView: View {
         .sheet(isPresented: $showingDiscovery) {
             DiscoveryView(mesh: mesh)
         }
+        .sheet(isPresented: $showingDebug) {
+            DebugView(mesh: mesh)
+        }
         .sheet(item: $mesh.pendingTrustRequest) { peer in
             TrustPromptView(mesh: mesh, peer: peer)
+        }
+        .onChange(of: mesh.pendingTrustRequest) {
+            // SwiftUI can only present one sheet at a time from this view,
+            // and this view has five independent .sheet() triggers. Without
+            // this, an inbound connection request arriving while any other
+            // sheet (most commonly Debug, which now auto-opens on every
+            // Connect tap) is already up would silently fail to show its
+            // trust prompt — the invitation handler never gets called, the
+            // system times the invite out on its own, and the connection
+            // just quietly dies with nothing on screen explaining why.
+            guard mesh.pendingTrustRequest != nil else { return }
+            showingGroupSwitcher = false
+            showingProfile = false
+            showingDiscovery = false
+            showingDebug = false
         }
         .onAppear {
             mesh.start()

@@ -2,6 +2,7 @@ import Foundation
 import MultipeerConnectivity
 import Combine
 import UserNotifications
+import os
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -26,6 +27,13 @@ final class MeshManager: NSObject, ObservableObject {
     @Published private(set) var localNetworkAuthorized: Bool = true
     @Published var currentGroup: ChatGroup
     @Published private(set) var typingPeerIDs: Set<String> = []
+
+    /// Rolling log of discovery/connect/trust/route events for the Debug
+    /// view — lets you see *why* a device isn't connecting or where a
+    /// message is actually routing instead of guessing. Capped and pruned
+    /// FIFO so a long session doesn't grow this unbounded.
+    @Published private(set) var debugLog: [DebugLogEntry] = []
+    private let debugLogCap = 300
 
     /// Reconstructed mesh topology, gossiped by every peer: topologyEdges[id]
     /// = the set of peer IDs that peer is directly
@@ -93,6 +101,55 @@ final class MeshManager: NSObject, ObservableObject {
             seenEnvelopeIDs.remove(oldest)
         }
         return true
+    }
+
+    /// Real structured logging (os.Logger / the unified logging system)
+    /// instead of bare print(): every entry gets a subsystem + a category
+    /// matching DebugLogEntry.Category, so in Console.app (or Xcode's
+    /// console) you can filter to just "route" or just "error", the level
+    /// (debug/info/error) drives the icon/color Console.app shows, and the
+    /// log survives after the process exits — none of which a plain print()
+    /// statement gives you. `\(message, privacy: .public)` is required or
+    /// the unified logging system redacts dynamic content as "<private>" by
+    /// default, which would make copied logs useless.
+    private static let logSubsystem = Bundle.main.bundleIdentifier ?? "com.meshchat.app"
+
+    private static let loggers: [DebugLogEntry.Category: Logger] = [
+        .discovery: Logger(subsystem: logSubsystem, category: "discovery"),
+        .connect: Logger(subsystem: logSubsystem, category: "connect"),
+        .route: Logger(subsystem: logSubsystem, category: "route"),
+        .trust: Logger(subsystem: logSubsystem, category: "trust"),
+        .error: Logger(subsystem: logSubsystem, category: "error")
+    ]
+
+    private func log(_ category: DebugLogEntry.Category, _ message: String) {
+        debugLog.append(DebugLogEntry(timestamp: Date(), category: category, message: message))
+        if debugLog.count > debugLogCap {
+            debugLog.removeFirst(debugLog.count - debugLogCap)
+        }
+
+        let logger = Self.loggers[category] ?? Logger(subsystem: Self.logSubsystem, category: "mesh")
+        switch category {
+        case .error:
+            logger.error("\(message, privacy: .public)")
+        case .connect, .trust:
+            logger.info("\(message, privacy: .public)")
+        case .discovery, .route:
+            logger.debug("\(message, privacy: .public)")
+        }
+    }
+
+    func clearDebugLog() {
+        debugLog.removeAll()
+    }
+
+    /// Best-effort human-readable name for a stable peer ID, for log
+    /// messages — falls back to whatever's known (topology gossip, a
+    /// discovered peer, or just the raw ID) rather than requiring a real
+    /// MCPeerID to be on hand.
+    private func displayName(for id: String) -> String {
+        if id == DiscoveredPeer.stableID(for: localPeerID) { return "me" }
+        return topologyNames[id] ?? discoveredPeers[id]?.mcPeerID.displayName ?? id
     }
 
     /// Messages older than this vanish from history, in memory and on disk.
@@ -212,12 +269,39 @@ final class MeshManager: NSObject, ObservableObject {
     /// Peers that dropped to .notConnected but are still discovered nearby
     /// get re-invited. Chat history is keyed by stable peerID so reconnects
     /// never duplicate it. Gated by shouldInitiateAutoConnect so both sides
-    /// of an already-mutually-trusted pair don't invite each other at once.
+    /// of an already-mutually-trusted pair don't invite each other at once,
+    /// and by reconnectBackoff so a peer that keeps failing to connect (bad
+    /// radio conditions, genuinely out of range) gets retried less
+    /// aggressively over time instead of being hammered every 8s forever —
+    /// which mostly just adds more collision risk without ever actually
+    /// helping it reconnect sooner.
     private func rejoinDroppedPeers() {
+        let now = Date()
         for (id, peer) in discoveredPeers where peer.state == .notConnected {
             guard trustStore.isTrusted(id), shouldInitiateAutoConnect(to: peer.mcPeerID) else { continue }
+            if let nextAllowed = nextReconnectAttempt[id], nextAllowed > now { continue }
             invite(peer.mcPeerID)
         }
+    }
+
+    /// Consecutive failed-to-connect attempts per peer, and the earliest
+    /// time the next one is allowed. Reset the moment a peer actually
+    /// reaches .connected (see session(_:peer:didChange:)).
+    private var reconnectAttempts: [String: Int] = [:]
+    private var nextReconnectAttempt: [String: Date] = [:]
+
+    private func recordFailedReconnect(for id: String) {
+        let attempt = (reconnectAttempts[id] ?? 0) + 1
+        reconnectAttempts[id] = attempt
+        // 8s, 16s, 32s, 64s, capped at 2 minutes.
+        let delay = min(8.0 * pow(2.0, Double(attempt - 1)), 120.0)
+        nextReconnectAttempt[id] = Date().addingTimeInterval(delay)
+        log(.connect, "\(displayName(for: id)): backing off, next retry in \(Int(delay))s (attempt \(attempt))")
+    }
+
+    private func resetReconnectBackoff(for id: String) {
+        reconnectAttempts[id] = nil
+        nextReconnectAttempt[id] = nil
     }
 
     /// When both sides already trust each other, both would otherwise try to
@@ -253,7 +337,26 @@ final class MeshManager: NSObject, ObservableObject {
         if discoveredPeers[peer.id]?.state == .notConnected {
             discoveredPeers[peer.id]?.state = .connecting
         }
-        invite(peer.mcPeerID)
+        log(.trust, "Trusting \(peer.mcPeerID.displayName) and connecting")
+
+        if shouldInitiateAutoConnect(to: peer.mcPeerID) {
+            invite(peer.mcPeerID)
+        } else {
+            // If both people tap Connect on each other at nearly the same
+            // moment, whoever's invite lands second collides with the
+            // first — the classic MultipeerConnectivity race where the
+            // session connects and then immediately drops. Give the other
+            // side's own invite a brief head start to land and auto-accept
+            // first; if it doesn't show up in time, invite anyway so a
+            // manual tap always eventually connects instead of silently
+            // waiting forever.
+            let peerID = peer.id
+            let mcPeerID = peer.mcPeerID
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                guard let self, self.discoveredPeers[peerID]?.state != .connected else { return }
+                self.invite(mcPeerID)
+            }
+        }
     }
 
     func decline(_ peer: DiscoveredPeer) {
@@ -275,6 +378,7 @@ final class MeshManager: NSObject, ObservableObject {
         guard !session.connectedPeers.contains(mcPeerID) else { return }
         guard !knownInvitees.contains(mcPeerID) else { return }
         knownInvitees.add(mcPeerID)
+        log(.connect, "Inviting \(mcPeerID.displayName)")
         browser.invitePeer(mcPeerID, to: session, withContext: nil, timeout: 15)
         DispatchQueue.main.asyncAfter(deadline: .now() + 16) { [weak self] in
             guard let self else { return }
@@ -282,6 +386,8 @@ final class MeshManager: NSObject, ObservableObject {
             let id = DiscoveredPeer.stableID(for: mcPeerID)
             if self.discoveredPeers[id]?.state == .connecting {
                 self.discoveredPeers[id]?.state = .notConnected
+                self.recordFailedReconnect(for: id)
+                self.log(.error, "Invite to \(mcPeerID.displayName) timed out with no response")
             }
         }
     }
@@ -342,7 +448,28 @@ final class MeshManager: NSObject, ObservableObject {
             hopCount: 0,
             payload: payload
         )
+        // Typing indicators fire on every keystroke — logging those would
+        // drown out everything else in the Debug view, so only real
+        // messages/stickers/files get a route entry.
+        if message.type != .typing {
+            log(.route, routeDescription(sending: "message", to: peer.mcPeerID))
+        }
         sendDirect(envelope, to: peer.mcPeerID, deliveryMode: deliveryMode)
+    }
+
+    /// Describes, for the Debug log, what sendDirect is about to try: a
+    /// direct send if the peer is actually in session.connectedPeers, a
+    /// flood if not (someone else will have to relay it the rest of the
+    /// way), or the "stuck" case where there's nobody to even flood to yet.
+    private func routeDescription(sending what: String, to mcPeerID: MCPeerID) -> String {
+        let name = mcPeerID.displayName
+        if session.connectedPeers.contains(mcPeerID) {
+            return "Sending \(what) to \(name): direct connection"
+        } else if !session.connectedPeers.isEmpty {
+            return "Sending \(what) to \(name): no direct link, flooding via \(session.connectedPeers.count) connected peer(s)"
+        } else {
+            return "Sending \(what) to \(name): no connected peers at all — nothing to send it through yet"
+        }
     }
 
     /// Sends straight to the peer if directly connected; otherwise floods to
@@ -389,7 +516,7 @@ final class MeshManager: NSObject, ObservableObject {
         do {
             try session.send(data, toPeers: connected, with: deliveryMode)
         } catch {
-            print("send failed: \(error.localizedDescription)")
+            log(.error, "Topology/control send failed: \(error.localizedDescription)")
         }
     }
 
@@ -415,7 +542,7 @@ final class MeshManager: NSObject, ObservableObject {
                 if let error {
                     self.activeTransfers[transferID]?.status = .failed
                     self.scheduleTransferCleanup(transferID: transferID)
-                    print("resource send failed: \(error.localizedDescription)")
+                    self.log(.error, "File send to \(mcPeerID.displayName) failed: \(error.localizedDescription)")
                 } else {
                     self.activeTransfers[transferID]?.status = .completed
                     self.activeTransfers[transferID]?.fractionCompleted = 1
@@ -483,6 +610,8 @@ final class MeshManager: NSObject, ObservableObject {
         topologyEdges.removeAll()
         topologyNames.removeAll()
         topologyLastSeen.removeAll()
+        reconnectAttempts.removeAll()
+        nextReconnectAttempt.removeAll()
 
         rebuildNetworkStack()
         start()
@@ -509,6 +638,8 @@ final class MeshManager: NSObject, ObservableObject {
         topologyEdges.removeAll()
         topologyNames.removeAll()
         topologyLastSeen.removeAll()
+        reconnectAttempts.removeAll()
+        nextReconnectAttempt.removeAll()
 
         rebuildNetworkStack()
         start()
@@ -544,11 +675,16 @@ final class MeshManager: NSObject, ObservableObject {
 
         guard !notificationAuthRequested else { return }
         notificationAuthRequested = true
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
-            if let error {
-                print("notification authorization error: \(error.localizedDescription)")
-            } else if !granted {
-                print("notification authorization denied")
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { [weak self] granted, error in
+            // This completion handler isn't guaranteed to run on the main
+            // actor, and log()/MeshManager's state is — hop back over
+            // before touching either.
+            Task { @MainActor in
+                if let error {
+                    self?.log(.error, "Notification authorization error: \(error.localizedDescription)")
+                } else if !granted {
+                    self?.log(.error, "Notification authorization denied by user")
+                }
             }
         }
     }
@@ -600,9 +736,10 @@ final class MeshManager: NSObject, ObservableObject {
         content.sound = .default
 
         let request = UNNotificationRequest(identifier: message.id.uuidString, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request) { error in
-            if let error {
-                print("failed to post notification: \(error.localizedDescription)")
+        UNUserNotificationCenter.current().add(request) { [weak self] error in
+            guard let error else { return }
+            Task { @MainActor in
+                self?.log(.error, "Failed to post system notification: \(error.localizedDescription)")
             }
         }
     }
@@ -681,6 +818,15 @@ extension MeshManager: MCSessionDelegate {
             peer.lastSeen = Date()
             discoveredPeers[id] = peer
 
+            if state == .connected {
+                // A real connection landed — clear any accumulated backoff
+                // so a future drop starts retrying at the normal 8s pace
+                // again instead of staying artificially slow.
+                resetReconnectBackoff(for: id)
+            }
+
+            log(.connect, "\(peerID.displayName) → \(Self.describe(state))")
+
             // Any connect/disconnect changes my own edges in the mesh graph
             // — announce it right away instead of waiting for the next
             // periodic tick so the Discovery graph feels responsive.
@@ -723,7 +869,7 @@ extension MeshManager: MCSessionDelegate {
             let transferID = receivingTransferIDs.removeValue(forKey: key)
 
             guard let localURL, error == nil else {
-                print("resource receive failed: \(error?.localizedDescription ?? "unknown")")
+                log(.error, "File receive from \(peerID.displayName) failed: \(error?.localizedDescription ?? "unknown")")
                 if let transferID {
                     activeTransfers[transferID]?.status = .failed
                     scheduleTransferCleanup(transferID: transferID)
@@ -759,7 +905,7 @@ extension MeshManager: MCSessionDelegate {
                 appendLocal(message)
                 postLocalNotification(for: message)
             } catch {
-                print("failed to store received resource: \(error.localizedDescription)")
+                log(.error, "Failed to store received file from \(peerID.displayName): \(error.localizedDescription)")
                 if let transferID {
                     activeTransfers[transferID]?.status = .failed
                     scheduleTransferCleanup(transferID: transferID)
@@ -770,6 +916,15 @@ extension MeshManager: MCSessionDelegate {
 
     nonisolated func session(_ session: MCSession, didReceive stream: InputStream, withName streamName: String, fromPeer peerID: MCPeerID) {
         // Not used; all transport goes through send(_:toPeers:with:) and sendResource.
+    }
+
+    private static func describe(_ state: MCSessionState) -> String {
+        switch state {
+        case .notConnected: return "not connected"
+        case .connecting: return "connecting"
+        case .connected: return "connected"
+        @unknown default: return "unknown state"
+        }
     }
 
     static func receivedFileDestination(named name: String) throws -> URL {
@@ -811,6 +966,8 @@ extension MeshManager: MCSessionDelegate {
             if isForMe, !messages.contains(where: { $0.id == message.id }) {
                 appendLocal(message)
                 postLocalNotification(for: message)
+                let route = envelope.hopCount == 0 ? "direct" : "via relay, \(envelope.hopCount) hop(s)"
+                log(.route, "Received from \(message.senderName): \(route)")
             }
             // Every peer helps relay now, not just a designated host — keep
             // forwarding envelopes addressed to someone else one hop closer
@@ -856,7 +1013,18 @@ extension MeshManager: MCSessionDelegate {
     /// hopCount hits the cap. seenEnvelopeIDs (checked before handle() is
     /// even called) stops it from looping forever around any cycle.
     private func floodForward(_ envelope: MeshEnvelope, excluding sender: MCPeerID) {
-        guard envelope.hopCount < dynamicHopCap else { return }
+        // Topology gossip re-floods every ~6s from every peer, hop after hop
+        // — logging that would drown out the actual chat routing the Debug
+        // view is meant to surface, so only .chatMessage envelopes get a
+        // route entry.
+        let shouldLog = envelope.kind == .chatMessage
+
+        guard envelope.hopCount < dynamicHopCap else {
+            if shouldLog {
+                log(.error, "Dropped message toward \(displayName(for: envelope.targetPeerID ?? "mesh")): hop cap (\(dynamicHopCap)) reached")
+            }
+            return
+        }
         let forwarded = MeshEnvelope(
             id: envelope.id,
             kind: envelope.kind,
@@ -869,12 +1037,18 @@ extension MeshManager: MCSessionDelegate {
 
         if let targetID = envelope.targetPeerID,
            let targetPeer = session.connectedPeers.first(where: { DiscoveredPeer.stableID(for: $0) == targetID }) {
+            if shouldLog {
+                log(.route, "Relaying to \(targetPeer.displayName): direct from here (hop \(forwarded.hopCount))")
+            }
             try? session.send(data, toPeers: [targetPeer], with: .reliable)
             return
         }
 
         let others = session.connectedPeers.filter { $0 != sender }
         guard !others.isEmpty else { return }
+        if shouldLog {
+            log(.route, "Relaying toward \(displayName(for: envelope.targetPeerID ?? "mesh")): flooding to \(others.count) peer(s) (hop \(forwarded.hopCount))")
+        }
         try? session.send(data, toPeers: others, with: .reliable)
     }
 
@@ -975,12 +1149,43 @@ extension MeshManager: MCSessionDelegate {
     private func syncRelayReachablePeers() {
         let myID = DiscoveredPeer.stableID(for: localPeerID)
         let now = Date()
+        // session.connectedPeers is the only real source of truth for
+        // "directly connected right now" — never let this function touch
+        // one of those.
+        let directlyConnectedIDs = Set(session.connectedPeers.map { DiscoveredPeer.stableID(for: $0) })
 
-        for (id, name) in topologyNames where id != myID {
+        for (id, name) in topologyNames where id != myID && !directlyConnectedIDs.contains(id) {
             if var existing = discoveredPeers[id] {
-                if existing.isRelayed {
-                    existing.lastSeen = topologyLastSeen[id] ?? now
-                    discoveredPeers[id] = existing
+                // A peer actively mid-handshake (.connecting) is NOT yet in
+                // session.connectedPeers — MCSession only adds it once the
+                // link is actually up — so without this guard, any peer
+                // also reachable via relay gossip (common in any mesh with
+                // 3+ devices) would get its real, in-progress direct
+                // connect attempt silently overwritten with "Connected (via
+                // relay)" the moment gossip arrived, which is exactly what
+                // made a genuinely-forming direct link look indistinguishable
+                // from relay-only. Leave .connecting alone — it either
+                // resolves to a true direct connection (session:didChange)
+                // or times out to .notConnected on its own, at which point
+                // this function is free to mark it relay-reachable.
+                guard existing.state != .connecting else { continue }
+
+                // Known some other way already (e.g. discovered nearby but
+                // never actually connected, or a stalled/timed-out invite
+                // left it at .notConnected) — topology gossip proves the
+                // mesh can still reach them via relay, so reflect that in
+                // the peer list instead of leaving it stuck on whatever
+                // state it was in before the mesh found another path. This
+                // was the bug behind a peer sitting at "Connecting…" forever
+                // despite the Discovery graph and multi-hop delivery already
+                // working for them.
+                let wasAlreadyUpToDate = existing.isRelayed && existing.state == .connected
+                existing.isRelayed = true
+                existing.state = .connected
+                existing.lastSeen = topologyLastSeen[id] ?? now
+                discoveredPeers[id] = existing
+                if !wasAlreadyUpToDate {
+                    log(.connect, "\(existing.mcPeerID.displayName) → connected (via relay)")
                 }
                 continue
             }
@@ -998,6 +1203,7 @@ extension MeshManager: MCSessionDelegate {
         for (id, peer) in discoveredPeers where peer.isRelayed {
             let lastSeen = topologyLastSeen[id] ?? peer.lastSeen
             if now.timeIntervalSince(lastSeen) > relayPeerStaleAfter {
+                log(.discovery, "\(peer.mcPeerID.displayName) dropped from mesh (no gossip for \(Int(relayPeerStaleAfter))s)")
                 discoveredPeers.removeValue(forKey: id)
                 topologyNames.removeValue(forKey: id)
                 topologyEdges.removeValue(forKey: id)
@@ -1014,8 +1220,10 @@ extension MeshManager: MCNearbyServiceAdvertiserDelegate {
         Task { @MainActor in
             let id = DiscoveredPeer.stableID(for: peerID)
             if trustStore.isTrusted(id) {
+                log(.trust, "Auto-accepting invitation from \(peerID.displayName) (already trusted)")
                 invitationHandler(true, session)
             } else {
+                log(.trust, "Invitation from \(peerID.displayName) — awaiting trust decision")
                 let peer = DiscoveredPeer(
                     id: id,
                     mcPeerID: peerID,
@@ -1035,7 +1243,7 @@ extension MeshManager: MCNearbyServiceAdvertiserDelegate {
 
     nonisolated func advertiser(_ advertiser: MCNearbyServiceAdvertiser, didNotStartAdvertisingPeer error: Error) {
         Task { @MainActor in
-            print("advertising failed: \(error.localizedDescription)")
+            log(.error, "Advertising failed to start: \(error.localizedDescription)")
             localNetworkAuthorized = false
         }
     }
@@ -1048,8 +1256,12 @@ extension MeshManager: MCNearbyServiceBrowserDelegate {
         Task { @MainActor in
             let id = DiscoveredPeer.stableID(for: peerID)
             let groupName = info?[DiscoveryKey.groupName]
-            guard groupName == nil || groupName == currentGroup.name else { return }
+            guard groupName == nil || groupName == currentGroup.name else {
+                log(.discovery, "Ignored \(peerID.displayName): different group (\(groupName ?? "-"))")
+                return
+            }
 
+            let wasAlreadyKnown = discoveredPeers[id] != nil
             let wasRelayOnly = discoveredPeers[id]?.isRelayed ?? false
             var peer = discoveredPeers[id] ?? DiscoveredPeer(
                 id: id,
@@ -1077,6 +1289,10 @@ extension MeshManager: MCNearbyServiceBrowserDelegate {
             peer.isTrusted = trustStore.isTrusted(id)
             discoveredPeers[id] = peer
 
+            if !wasAlreadyKnown || wasRelayOnly {
+                log(.discovery, "Found \(peerID.displayName) nearby\(peer.isTrusted ? " (trusted)" : "")")
+            }
+
             if peer.isTrusted && shouldInitiateAutoConnect(to: peerID) {
                 invite(peerID)
             }
@@ -1087,12 +1303,13 @@ extension MeshManager: MCNearbyServiceBrowserDelegate {
         Task { @MainActor in
             let id = DiscoveredPeer.stableID(for: peerID)
             discoveredPeers[id]?.state = .notConnected
+            log(.discovery, "Lost \(peerID.displayName) (out of range)")
         }
     }
 
     nonisolated func browser(_ browser: MCNearbyServiceBrowser, didNotStartBrowsingForPeers error: Error) {
         Task { @MainActor in
-            print("browsing failed: \(error.localizedDescription)")
+            log(.error, "Browsing failed to start: \(error.localizedDescription)")
             localNetworkAuthorized = false
         }
     }
@@ -1113,6 +1330,7 @@ extension MeshManager {
         guard let handler = pendingInvitationHandlers[peer.id] else { return }
         handler(accept, accept ? session : nil)
         pendingInvitationHandlers[peer.id] = nil
+        log(.trust, accept ? "Accepted \(peer.mcPeerID.displayName)" : "Declined \(peer.mcPeerID.displayName)")
         if accept {
             markTrusted(peer)
         } else {

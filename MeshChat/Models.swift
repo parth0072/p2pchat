@@ -189,6 +189,26 @@ struct InAppBanner: Identifiable, Equatable {
     let preview: String
 }
 
+// MARK: - Debug log
+
+/// A single event in MeshManager's in-memory debug log — discovery, connect
+/// state changes, trust decisions, and message routing attempts. Purely for
+/// the in-app Debug view (see DebugLogView); nothing here is persisted.
+struct DebugLogEntry: Identifiable, Hashable {
+    enum Category: String {
+        case discovery
+        case connect
+        case route
+        case trust
+        case error
+    }
+
+    let id = UUID()
+    let timestamp: Date
+    let category: Category
+    let message: String
+}
+
 // MARK: - Group
 
 struct ChatGroup: Codable, Identifiable, Hashable {

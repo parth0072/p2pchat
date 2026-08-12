@@ -16,6 +16,7 @@
 		A419C8FA113F575547BC954A /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9CDDFF31C81E3ADD5001473 /* ProfileView.swift */; };
 		7C07393F9C99906A66857C24 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 4F86F56488FC84D5A5F4DDF3 /* Assets.xcassets */; };
 		0478613A7B0BC6EFFE8162D0 /* DiscoveryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30C5B07E106DD801927FC60A /* DiscoveryView.swift */; };
+		1B0EA291D34DD800BD101EFD /* DebugView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1927E5A2BFC4CDF2E25EC3DB /* DebugView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -31,6 +32,7 @@
 		F9CDDFF31C81E3ADD5001473 /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
 		4F86F56488FC84D5A5F4DDF3 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		30C5B07E106DD801927FC60A /* DiscoveryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoveryView.swift; sourceTree = "<group>"; };
+		1927E5A2BFC4CDF2E25EC3DB /* DebugView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -63,6 +65,7 @@
 				357AECFFD009DAE6310E9D15 /* ChatView.swift */,
 				F9CDDFF31C81E3ADD5001473 /* ProfileView.swift */,
 				30C5B07E106DD801927FC60A /* DiscoveryView.swift */,
+				1927E5A2BFC4CDF2E25EC3DB /* DebugView.swift */,
 				4F86F56488FC84D5A5F4DDF3 /* Assets.xcassets */,
 				D5E6C52DEE5CC019C248F31B /* Info.plist */,
 				1730810B724F663A5C62119E /* MeshChat.entitlements */,
@@ -155,6 +158,7 @@
 				5E42B6EB59A68B533675C035 /* ChatView.swift in Sources */,
 				A419C8FA113F575547BC954A /* ProfileView.swift in Sources */,
 				0478613A7B0BC6EFFE8162D0 /* DiscoveryView.swift in Sources */,
+				1B0EA291D34DD800BD101EFD /* DebugView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

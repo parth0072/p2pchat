@@ -1,8 +1,11 @@
 import Foundation
 import SwiftData
+import os
 #if canImport(UIKit)
 import UIKit
 #endif
+
+private let storageLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.meshchat.app", category: "storage")
 
 // MARK: - SwiftData model
 
@@ -142,7 +145,7 @@ final class MessageStore {
         do {
             try context.save()
         } catch {
-            print("persistence save failed: \(error.localizedDescription)")
+            storageLogger.error("SwiftData save failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 }
@@ -198,7 +201,7 @@ final class ProfileStore: ObservableObject {
             profile.avatarFileName = avatarFileName
             persist()
         } catch {
-            print("failed to save avatar: \(error.localizedDescription)")
+            storageLogger.error("Failed to save avatar: \(error.localizedDescription, privacy: .public)")
         }
     }
 
