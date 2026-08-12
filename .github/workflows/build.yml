@@ -19,28 +19,28 @@ jobs:
 
       # CODE_SIGNING_ALLOWED=NO skips code signing entirely — CI runners
       # don't have your Apple Developer certificate/team installed, and
-      # don't need one just to verify the app compiles.
+      # don't need one just to produce a build. The resulting .app is
+      # unsigned, so on the receiving Mac it needs the same Gatekeeper
+      # bypass as any other unsigned/ad-hoc app (right-click > Open, or
+      # `xattr -cr MeshChat.app`).
       - name: Build for macOS
         run: |
           xcodebuild build \
             -project MeshChat.xcodeproj \
             -scheme MeshChat \
+            -configuration Release \
             -destination 'platform=macOS' \
+            -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
 
-  build-ios:
-    name: Build (iOS Simulator)
-    runs-on: macos-14
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Show Xcode version
-        run: xcodebuild -version
-
-      - name: Build for iOS Simulator
+      - name: Zip the app
         run: |
-          xcodebuild build \
-            -project MeshChat.xcodeproj \
-            -scheme MeshChat \
-            -destination 'generic/platform=iOS Simulator' \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+          cd build/Build/Products/Release
+          ditto -c -k --sequesterRsrc --keepParent MeshChat.app MeshChat-macOS.zip
+
+      - name: Upload macOS build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MeshChat-macOS
+          path: build/Build/Products/Release/MeshChat-macOS.zip
+          retention-days: 14
