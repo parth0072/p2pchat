@@ -7,6 +7,9 @@ on:
     branches: ["main"]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-macos:
     name: Build (macOS)
@@ -44,3 +47,20 @@ jobs:
           name: MeshChat-macOS
           path: build/Build/Products/Release/MeshChat-macOS.zip
           retention-days: 14
+
+      # Actions artifacts (above) require a logged-in GitHub session to
+      # download, so they don't work from a plain `curl` install script.
+      # Publishing to a rolling "latest" Release instead makes the zip a
+      # public, unauthenticated URL that install.sh can fetch directly.
+      # Only do this on actual pushes to main, not on PR builds.
+      - name: Publish/update "latest" release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest macOS build
+          body: Automated build from commit ${{ github.sha }}. Unsigned — install via install.sh or `xattr -cr` after unzipping.
+          make_latest: true
+          files: build/Build/Products/Release/MeshChat-macOS.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
