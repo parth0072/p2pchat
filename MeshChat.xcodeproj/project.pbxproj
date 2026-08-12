@@ -15,6 +15,7 @@
 		DBED409F40541B994E5C70AA /* Persistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71E2B4579863C58ED59978D6 /* Persistence.swift */; };
 		A419C8FA113F575547BC954A /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9CDDFF31C81E3ADD5001473 /* ProfileView.swift */; };
 		7C07393F9C99906A66857C24 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 4F86F56488FC84D5A5F4DDF3 /* Assets.xcassets */; };
+		0478613A7B0BC6EFFE8162D0 /* DiscoveryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30C5B07E106DD801927FC60A /* DiscoveryView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -29,6 +30,7 @@
 		F4BE4B0CE5447347070B651B /* MeshManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshManager.swift; sourceTree = "<group>"; };
 		F9CDDFF31C81E3ADD5001473 /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
 		4F86F56488FC84D5A5F4DDF3 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		30C5B07E106DD801927FC60A /* DiscoveryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoveryView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -60,6 +62,7 @@
 				D7FAB808B7E4B64D6CDE9499 /* PeerListView.swift */,
 				357AECFFD009DAE6310E9D15 /* ChatView.swift */,
 				F9CDDFF31C81E3ADD5001473 /* ProfileView.swift */,
+				30C5B07E106DD801927FC60A /* DiscoveryView.swift */,
 				4F86F56488FC84D5A5F4DDF3 /* Assets.xcassets */,
 				D5E6C52DEE5CC019C248F31B /* Info.plist */,
 				1730810B724F663A5C62119E /* MeshChat.entitlements */,
@@ -151,6 +154,7 @@
 				A8DE1029AFBC778BA5389058 /* PeerListView.swift in Sources */,
 				5E42B6EB59A68B533675C035 /* ChatView.swift in Sources */,
 				A419C8FA113F575547BC954A /* ProfileView.swift in Sources */,
+				0478613A7B0BC6EFFE8162D0 /* DiscoveryView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -7,6 +7,7 @@ struct PeerListView: View {
     @Binding var selectedPeer: DiscoveredPeer?
     @State var showingGroupSwitcher = false
     @State var showingProfile = false
+    @State var showingDiscovery = false
     @State var knownGroups: [ChatGroup]
 
     private var sortedPeers: [DiscoveredPeer] {
@@ -49,6 +50,13 @@ struct PeerListView: View {
             }
             ToolbarItem {
                 Button {
+                    showingDiscovery = true
+                } label: {
+                    Label("Discovery", systemImage: "point.3.connected.trianglepath.dotted")
+                }
+            }
+            ToolbarItem {
+                Button {
                     showingGroupSwitcher = true
                 } label: {
                     Label("Groups", systemImage: "person.3")
@@ -60,6 +68,13 @@ struct PeerListView: View {
                     showingProfile = true
                 } label: {
                     Label("Profile", systemImage: "person.crop.circle")
+                }
+            }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    showingDiscovery = true
+                } label: {
+                    Label("Discovery", systemImage: "point.3.connected.trianglepath.dotted")
                 }
             }
             ToolbarItem(placement: .navigationBarTrailing) {
@@ -76,6 +91,9 @@ struct PeerListView: View {
         }
         .sheet(isPresented: $showingProfile) {
             ProfileView(profileStore: profileStore, mesh: mesh)
+        }
+        .sheet(isPresented: $showingDiscovery) {
+            DiscoveryView(mesh: mesh)
         }
         .sheet(item: $mesh.pendingTrustRequest) { peer in
             TrustPromptView(mesh: mesh, peer: peer)

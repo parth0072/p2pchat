@@ -26,6 +26,14 @@ final class MeshManager: NSObject, ObservableObject {
     @Published var isRelayHost: Bool = false
     @Published private(set) var typingPeerIDs: Set<String> = []
 
+    /// Reconstructed mesh topology, gossiped by every peer (not just a relay
+    /// host): topologyEdges[id] = the set of peer IDs that peer is directly
+    /// connected to. Merges what I know locally with what everyone else has
+    /// reported about themselves, so the Discovery graph can show the whole
+    /// mesh even for peers I've never been in direct range of.
+    @Published private(set) var topologyEdges: [String: Set<String>] = [:]
+    @Published private(set) var topologyNames: [String: String] = [:]
+
     /// Set from ChatApp via scenePhase so incoming-message notifications are
     /// skipped while the chat is actually on screen, and fire once it isn't.
     @Published var isAppActive: Bool = true
@@ -60,8 +68,30 @@ final class MeshManager: NSObject, ObservableObject {
 
     private var reconnectTimer: Timer?
     private var expiryTimer: Timer?
+    private var topologyTimer: Timer?
     private let knownInvitees = NSMutableSet() // avoid duplicate invites in-flight
     private var notificationAuthRequested = false
+
+    /// Envelope IDs already relayed, so a flooded envelope that loops back
+    /// around the mesh (any cycle in the connection graph) gets dropped
+    /// instead of being forwarded again and again. Capped and pruned FIFO —
+    /// this only needs to remember recent traffic, not forever.
+    private var seenEnvelopeIDs: Set<UUID> = []
+    private var seenEnvelopeOrder: [UUID] = []
+    private let seenEnvelopeCap = 500
+
+    /// Returns true the first time this envelope ID is seen; false (and
+    /// records nothing new) on repeats.
+    private func markSeenIfNew(_ id: UUID) -> Bool {
+        guard !seenEnvelopeIDs.contains(id) else { return false }
+        seenEnvelopeIDs.insert(id)
+        seenEnvelopeOrder.append(id)
+        if seenEnvelopeOrder.count > seenEnvelopeCap {
+            let oldest = seenEnvelopeOrder.removeFirst()
+            seenEnvelopeIDs.remove(oldest)
+        }
+        return true
+    }
 
     /// Messages older than this vanish from history, in memory and on disk.
     static let messageLifetime: TimeInterval = 24 * 60 * 60
@@ -121,6 +151,7 @@ final class MeshManager: NSObject, ObservableObject {
         browser.startBrowsingForPeers()
         startReconnectTimer()
         startExpiryTimer()
+        startTopologyTimer()
         requestNotificationAuthorizationIfNeeded()
     }
 
@@ -132,6 +163,18 @@ final class MeshManager: NSObject, ObservableObject {
         reconnectTimer = nil
         expiryTimer?.invalidate()
         expiryTimer = nil
+        topologyTimer?.invalidate()
+        topologyTimer = nil
+    }
+
+    private func startTopologyTimer() {
+        topologyTimer?.invalidate()
+        broadcastTopology()
+        topologyTimer = Timer.scheduledTimer(withTimeInterval: 6, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.broadcastTopology()
+            }
+        }
     }
 
     private func startReconnectTimer() {
@@ -223,6 +266,14 @@ final class MeshManager: NSObject, ObservableObject {
     // MARK: Invitations
 
     private func invite(_ mcPeerID: MCPeerID) {
+        // Bonjour rediscovery pings keep firing browser(_:foundPeer:) for
+        // peers we're already connected to, and that auto-invite path has no
+        // connection-state check of its own — without this guard, an already
+        // trusted+connected peer gets re-invited over and over for as long as
+        // the session lasts, which re-runs the whole invite/accept handshake
+        // (and can look like "asking to trust" repeatedly) instead of only
+        // once per actual disconnect.
+        guard !session.connectedPeers.contains(mcPeerID) else { return }
         guard !knownInvitees.contains(mcPeerID) else { return }
         knownInvitees.add(mcPeerID)
         browser.invitePeer(mcPeerID, to: session, withContext: nil, timeout: 15)
@@ -285,6 +336,7 @@ final class MeshManager: NSObject, ObservableObject {
     private func sendChatMessage(_ message: ChatMessage, to peer: DiscoveredPeer, deliveryMode: MCSessionSendDataMode) {
         guard let payload = try? JSONEncoder().encode(message) else { return }
         let envelope = MeshEnvelope(
+            id: UUID(),
             kind: .chatMessage,
             originPeerID: message.senderID,
             targetPeerID: peer.id,
@@ -294,10 +346,12 @@ final class MeshManager: NSObject, ObservableObject {
         sendDirect(envelope, to: peer.mcPeerID, deliveryMode: deliveryMode)
     }
 
-    /// Sends straight to the peer if directly connected; otherwise falls
-    /// back to a best-effort broadcast to whoever we *are* connected to
-    /// (with targetPeerID already set on the envelope) so a relay host among
-    /// them can pick it up and forward it on via relayForward.
+    /// Sends straight to the peer if directly connected; otherwise floods to
+    /// whoever we *are* connected to (targetPeerID stays set on the
+    /// envelope), and every peer that receives it keeps forwarding it one
+    /// hop closer via floodForward until it reaches the actual target — this
+    /// is what lets a message reach a peer several hops away through
+    /// intermediate devices, not just peers directly in range.
     private func sendDirect(_ envelope: MeshEnvelope, to mcPeerID: MCPeerID, deliveryMode: MCSessionSendDataMode) {
         guard let data = try? JSONEncoder().encode(envelope) else { return }
         if session.connectedPeers.contains(mcPeerID) {
@@ -429,6 +483,8 @@ final class MeshManager: NSObject, ObservableObject {
         isRelayHost = group.isHostRelay && group.hostPeerID == DiscoveredPeer.stableID(for: localPeerID)
         discoveredPeers.removeAll()
         relayReachablePeerIDs.removeAll()
+        topologyEdges.removeAll()
+        topologyNames.removeAll()
 
         rebuildNetworkStack()
         start()
@@ -453,6 +509,8 @@ final class MeshManager: NSObject, ObservableObject {
         localPeerID = MCPeerID(displayName: trimmed)
         discoveredPeers.removeAll()
         relayReachablePeerIDs.removeAll()
+        topologyEdges.removeAll()
+        topologyNames.removeAll()
 
         rebuildNetworkStack()
         start()
@@ -579,12 +637,20 @@ extension MeshManager: MCSessionDelegate {
             if state == .connected, isRelayHost {
                 broadcastRoster()
             }
+            // Any connect/disconnect changes my own edges in the mesh graph
+            // — announce it right away instead of waiting for the next
+            // periodic tick so the Discovery graph feels responsive.
+            broadcastTopology()
         }
     }
 
     nonisolated func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
         Task { @MainActor in
             guard let envelope = try? JSONDecoder().decode(MeshEnvelope.self, from: data) else { return }
+            // Drop anything we've already relayed/handled once before —
+            // required for floodForward to terminate instead of looping
+            // envelopes around any cycle in the mesh forever.
+            guard markSeenIfNew(envelope.id) else { return }
             handle(envelope, from: peerID)
         }
     }
@@ -680,9 +746,9 @@ extension MeshManager: MCSessionDelegate {
             let myID = DiscoveredPeer.stableID(for: localPeerID)
             // targetPeerID is nil only for old/legacy envelopes; every
             // message sent by the current code has it set to the intended
-            // recipient, so a relay host can tell "mine to keep" apart from
-            // "someone else's, just pass it on" instead of showing/relaying
-            // everything to everyone.
+            // recipient, so any relaying peer can tell "mine to keep" apart
+            // from "someone else's, just pass it on" instead of
+            // showing/relaying everything to everyone.
             let isForMe = envelope.targetPeerID == nil || envelope.targetPeerID == myID
 
             if message.type == .typing {
@@ -692,8 +758,8 @@ extension MeshManager: MCSessionDelegate {
                     } else {
                         typingPeerIDs.remove(message.senderID)
                     }
-                } else if isRelayHost {
-                    relayForward(envelope, excluding: peerID)
+                } else {
+                    floodForward(envelope, excluding: peerID)
                 }
                 return
             }
@@ -702,24 +768,53 @@ extension MeshManager: MCSessionDelegate {
                 appendLocal(message)
                 postLocalNotification(for: message)
             }
-            // A relay host keeps forwarding envelopes addressed to someone
-            // else it isn't the final destination for.
-            if isRelayHost, let targetID = envelope.targetPeerID, targetID != myID {
-                relayForward(envelope, excluding: peerID)
+            // Every peer helps relay now, not just a designated host — keep
+            // forwarding envelopes addressed to someone else one hop closer
+            // to them, so a message can cross several intermediate devices
+            // to reach a peer that's out of direct range.
+            if let targetID = envelope.targetPeerID, targetID != myID {
+                floodForward(envelope, excluding: peerID)
             }
         case .control:
             guard let control = try? JSONDecoder().decode(ControlMessage.self, from: envelope.payload) else { return }
-            handleControl(control)
+            handleControl(control, from: peerID)
+            // Topology/roster gossip has no single target — it floods to
+            // the whole mesh — so keep passing it along too.
+            if envelope.targetPeerID == nil {
+                floodForward(envelope, excluding: peerID)
+            }
         }
     }
 
-    /// Host-mode: re-sends an envelope (with hopCount bumped) toward its
-    /// intended recipient if directly connected to them, or as a best-effort
-    /// broadcast to everyone else otherwise, so devices that aren't directly
-    /// linked to the original sender still receive messages addressed to them.
-    private func relayForward(_ envelope: MeshEnvelope, excluding sender: MCPeerID) {
-        guard envelope.hopCount < 3 else { return }
+    /// Worst case, a message needs one hop per *other* device in a straight
+    /// chain to cross the whole mesh (device 1 -> 2 -> 3 -> ... -> N is N-1
+    /// hops). So instead of a fixed cap, size it to how many distinct peers
+    /// we actually know about right now (directly connected, or reported by
+    /// someone else's topology gossip) — that's always enough hops to reach
+    /// anyone currently reachable at all, and it grows automatically as more
+    /// devices join instead of silently capping reach in a bigger mesh or
+    /// wasting relays flooding a tiny one. Floors at 3 so a freshly-launched
+    /// app (topology map still empty) isn't stuck at 0-1 hops before its
+    /// first gossip round lands.
+    private var dynamicHopCap: Int {
+        var knownIDs = Set(topologyNames.keys)
+        knownIDs.formUnion(discoveredPeers.keys)
+        knownIDs.insert(DiscoveredPeer.stableID(for: localPeerID))
+        return max(3, knownIDs.count - 1)
+    }
+
+    /// Re-sends an envelope (with hopCount bumped) toward its intended
+    /// recipient if directly connected to them, or as a best-effort flood to
+    /// everyone else otherwise. Every peer does this now (not just a
+    /// designated relay host), which is what makes multi-hop delivery work:
+    /// each hop only needs to know its own direct connections, not the whole
+    /// route — the envelope just keeps getting handed one hop closer until
+    /// hopCount hits the cap. seenEnvelopeIDs (checked before handle() is
+    /// even called) stops it from looping forever around any cycle.
+    private func floodForward(_ envelope: MeshEnvelope, excluding sender: MCPeerID) {
+        guard envelope.hopCount < dynamicHopCap else { return }
         let forwarded = MeshEnvelope(
+            id: envelope.id,
             kind: envelope.kind,
             originPeerID: envelope.originPeerID,
             targetPeerID: envelope.targetPeerID,
@@ -747,16 +842,49 @@ extension MeshManager: MCSessionDelegate {
             knownPeerIDs: session.connectedPeers.map(DiscoveredPeer.stableID(for:))
         )
         guard let payload = try? JSONEncoder().encode(control) else { return }
-        let envelope = MeshEnvelope(kind: .control, originPeerID: DiscoveredPeer.stableID(for: localPeerID), targetPeerID: nil, hopCount: 0, payload: payload)
+        let envelope = MeshEnvelope(id: UUID(), kind: .control, originPeerID: DiscoveredPeer.stableID(for: localPeerID), targetPeerID: nil, hopCount: 0, payload: payload)
         sendEnvelope(envelope, deliveryMode: .reliable)
     }
 
-    private func handleControl(_ control: ControlMessage) {
+    /// Announces my own direct connections to the whole mesh (flooded, see
+    /// floodForward) so every device — even ones I've never been in direct
+    /// range of — can merge everyone's reports into one adjacency map and
+    /// draw the full Discovery graph, not just their own 1-hop neighborhood.
+    private func broadcastTopology() {
+        let myID = DiscoveredPeer.stableID(for: localPeerID)
+        let directPeers = discoveredPeers.values
+            .filter { $0.state == .connected }
+            .map { TopologyPeerInfo(id: $0.id, name: $0.mcPeerID.displayName) }
+
+        topologyEdges[myID] = Set(directPeers.map(\.id))
+        topologyNames[myID] = localDisplayName
+
+        guard !session.connectedPeers.isEmpty else { return }
+        let control = ControlMessage(
+            type: .topology,
+            senderID: myID,
+            senderName: localDisplayName,
+            knownPeerIDs: nil,
+            directPeers: directPeers
+        )
+        guard let payload = try? JSONEncoder().encode(control) else { return }
+        let envelope = MeshEnvelope(id: UUID(), kind: .control, originPeerID: myID, targetPeerID: nil, hopCount: 0, payload: payload)
+        sendEnvelope(envelope, deliveryMode: .reliable)
+    }
+
+    private func handleControl(_ control: ControlMessage, from _: MCPeerID) {
         switch control.type {
         case .peerRoster:
             guard let ids = control.knownPeerIDs else { return }
             for id in ids where discoveredPeers[id] == nil {
                 relayReachablePeerIDs.insert(id)
+            }
+        case .topology:
+            guard let directPeers = control.directPeers else { return }
+            topologyNames[control.senderID] = control.senderName
+            topologyEdges[control.senderID] = Set(directPeers.map(\.id))
+            for peerInfo in directPeers where topologyNames[peerInfo.id] == nil {
+                topologyNames[peerInfo.id] = peerInfo.name
             }
         case .trustRequest, .trustAccepted:
             break

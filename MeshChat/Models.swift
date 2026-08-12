@@ -69,17 +69,24 @@ struct ChatMessage: Codable, Identifiable, Hashable {
 // MARK: - Envelope
 
 /// Wire-format wrapper sent over MCSession. Keeps ChatMessage decoupled from
-/// relay metadata (hop count, origin, target) needed for host/relay mode.
+/// relay metadata (hop count, origin, target) needed for multi-hop relaying.
 struct MeshEnvelope: Codable {
     enum Kind: String, Codable {
         case chatMessage
         case control
     }
 
+    /// Unique per envelope (preserved unchanged across every hop it takes).
+    /// Every peer that relays an envelope remembers IDs it's already seen and
+    /// drops repeats — without this, a mesh with any cycle in it would flood
+    /// the same envelope around forever instead of it dying out after a
+    /// bounded number of hops.
+    let id: UUID
     let kind: Kind
     let originPeerID: String
-    /// nil means "broadcast to everyone in the group"; otherwise a specific
-    /// peer's displayName-derived stable ID, used when relaying through a host.
+    /// nil means "flood to the whole mesh" (used for topology/roster gossip);
+    /// otherwise a specific peer's displayName-derived stable ID that every
+    /// relaying peer keeps forwarding toward until it arrives.
     let targetPeerID: String?
     let hopCount: Int
     let payload: Data
@@ -89,6 +96,18 @@ enum ControlMessageType: String, Codable {
     case trustRequest
     case trustAccepted
     case peerRoster
+    /// Periodic "here's who I'm directly connected to" gossip, floods through
+    /// the whole mesh so every device can reconstruct the full topology graph.
+    case topology
+}
+
+/// One edge reported by a .topology broadcast: "the sender is directly
+/// connected to this peer." Carries the name too so a device that has never
+/// been in direct radio range of a far peer can still show its name in the
+/// Discovery graph.
+struct TopologyPeerInfo: Codable, Hashable {
+    let id: String
+    let name: String
 }
 
 struct ControlMessage: Codable {
@@ -97,6 +116,8 @@ struct ControlMessage: Codable {
     let senderName: String
     /// Used by .peerRoster to let a host tell others who's reachable through it.
     let knownPeerIDs: [String]?
+    /// Used by .topology: the sender's own current direct connections.
+    var directPeers: [TopologyPeerInfo]? = nil
 }
 
 // MARK: - Peer
