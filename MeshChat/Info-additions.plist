@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Merge these keys into each target's Info.plist (or the generated
+  Info.plist via Xcode's Info tab / GENERATE_INFOPLIST_FILE build settings).
+  Both the iOS and macOS targets need NSLocalNetworkUsageDescription and
+  NSBonjourServices — MultipeerConnectivity uses Bonjour/AWDL under the hood
+  even on macOS.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>This app uses your local network and Bluetooth to discover and chat with nearby devices directly — no internet connection required.</string>
+
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_app-chat._tcp</string>
+        <string>_app-chat._udp</string>
+    </array>
+
+    <!-- iOS only: Bluetooth is used as a MultipeerConnectivity transport
+         alongside Wi-Fi/AWDL. Required since iOS 13 for peripheral use. -->
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>This app uses Bluetooth to discover and connect to nearby devices for peer-to-peer chat when Wi-Fi isn't available.</string>
+</dict>
+</plist>

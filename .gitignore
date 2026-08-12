@@ -1,0 +1,26 @@
+# Xcode
+build/
+DerivedData/
+*.moved-aside
+*.xccheckout
+*.xcscmblueprint
+*.hmap
+*.ipa
+
+# Per-user Xcode state (not meant to be shared)
+xcuserdata/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+
+# Simulator / archive artifacts
+*.xcarchive
+*.dSYM
+*.dSYM.zip
+
+# Swift Package Manager (not currently used, harmless to ignore if it shows up later)
+.build/
+.swiftpm/
+Package.resolved
+
+# macOS
+.DS_Store

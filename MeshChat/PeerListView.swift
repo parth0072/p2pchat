@@ -1,0 +1,287 @@
+import SwiftUI
+import MultipeerConnectivity
+
+struct PeerListView: View {
+    @ObservedObject var mesh: MeshManager
+    @ObservedObject var profileStore: ProfileStore
+    @Binding var selectedPeer: DiscoveredPeer?
+    @State var showingGroupSwitcher = false
+    @State var showingProfile = false
+    @State var knownGroups: [ChatGroup]
+
+    private var sortedPeers: [DiscoveredPeer] {
+        mesh.discoveredPeers.values.sorted { $0.mcPeerID.displayName < $1.mcPeerID.displayName }
+    }
+
+    var body: some View {
+        List(selection: $selectedPeer) {
+            Section {
+                ConnectionSummaryRow(mesh: mesh)
+            }
+
+            if !mesh.localNetworkAuthorized {
+                Section {
+                    LocalNetworkDeniedRow()
+                }
+            }
+
+            Section("Nearby Devices") {
+                if sortedPeers.isEmpty {
+                    Text("Searching for nearby peers…")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(sortedPeers) { peer in
+                        PeerRow(peer: peer, onConnect: { mesh.trust(peer) })
+                            .tag(peer)
+                    }
+                }
+            }
+        }
+        .navigationTitle(mesh.currentGroup.name)
+        .toolbar {
+            #if os(macOS)
+            ToolbarItem {
+                Button {
+                    showingProfile = true
+                } label: {
+                    Label("Profile", systemImage: "person.crop.circle")
+                }
+            }
+            ToolbarItem {
+                Button {
+                    showingGroupSwitcher = true
+                } label: {
+                    Label("Groups", systemImage: "person.3")
+                }
+            }
+            #else
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button {
+                    showingProfile = true
+                } label: {
+                    Label("Profile", systemImage: "person.crop.circle")
+                }
+            }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    showingGroupSwitcher = true
+                } label: {
+                    Label("Groups", systemImage: "person.3")
+                }
+            }
+            #endif
+        }
+        .sheet(isPresented: $showingGroupSwitcher) {
+            GroupSwitcherView(mesh: mesh, knownGroups: $knownGroups)
+        }
+        .sheet(isPresented: $showingProfile) {
+            ProfileView(profileStore: profileStore, mesh: mesh)
+        }
+        .sheet(item: $mesh.pendingTrustRequest) { peer in
+            TrustPromptView(mesh: mesh, peer: peer)
+        }
+        .onAppear {
+            mesh.start()
+            if profileStore.isFirstRun {
+                showingProfile = true
+            }
+        }
+    }
+}
+
+private struct ConnectionSummaryRow: View {
+    @ObservedObject var mesh: MeshManager
+
+    private var connectedCount: Int {
+        mesh.discoveredPeers.values.filter { $0.state == .connected }.count
+    }
+
+    var body: some View {
+        HStack {
+            Image(systemName: connectedCount > 0 ? "wifi" : "wifi.slash")
+                .foregroundStyle(connectedCount > 0 ? .green : .secondary)
+            Text("\(connectedCount) connected")
+                .font(.subheadline)
+            Spacer()
+            if mesh.isRelayHost {
+                Label("Relay host", systemImage: "antenna.radiowaves.left.and.right")
+                    .font(.caption)
+                    .foregroundStyle(.blue)
+            }
+        }
+    }
+}
+
+private struct LocalNetworkDeniedRow: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("Local Network access denied", systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .font(.subheadline.bold())
+            Text("This app needs Local Network permission to discover nearby devices. Enable it in Settings > Privacy > Local Network.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            #if os(iOS)
+            Button("Open Settings") {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            }
+            .font(.caption)
+            #endif
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+private struct PeerRow: View {
+    let peer: DiscoveredPeer
+    let onConnect: () -> Void
+
+    var body: some View {
+        HStack {
+            Circle()
+                .fill(color(for: peer.state))
+                .frame(width: 10, height: 10)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(peer.mcPeerID.displayName)
+                    .font(.body)
+                HStack(spacing: 4) {
+                    Text(statusText(for: peer.state))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if peer.isRelayed {
+                        Text("· via relay")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if !peer.isTrusted {
+                        Text("· untrusted")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
+            Spacer()
+            if peer.state == .notConnected {
+                Button("Connect", action: onConnect)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            } else if peer.state == .connecting {
+                ProgressView()
+                    .controlSize(.small)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func color(for state: PeerConnectionState) -> Color {
+        switch state {
+        case .connected: return .green
+        case .connecting: return .yellow
+        case .notConnected: return .gray
+        }
+    }
+
+    private func statusText(for state: PeerConnectionState) -> String {
+        switch state {
+        case .connected: return "Connected"
+        case .connecting: return "Connecting…"
+        case .notConnected: return "Not connected"
+        }
+    }
+}
+
+private struct TrustPromptView: View {
+    @ObservedObject var mesh: MeshManager
+    let peer: DiscoveredPeer
+    @State private var trustDevice = true
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "person.crop.circle.badge.questionmark")
+                .font(.system(size: 48))
+                .foregroundStyle(.blue)
+            Text("\(peer.mcPeerID.displayName) wants to connect")
+                .font(.headline)
+            Toggle("Trust this device", isOn: $trustDevice)
+                .padding(.horizontal)
+            Text("Trusted devices auto-connect next time without asking.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+
+            HStack(spacing: 16) {
+                Button("Decline", role: .destructive) {
+                    mesh.resolvePendingTrust(accept: false, peer: peer)
+                }
+                Button(trustDevice ? "Trust & Connect" : "Connect Once") {
+                    if trustDevice {
+                        mesh.resolvePendingTrust(accept: true, peer: peer)
+                    } else {
+                        mesh.resolvePendingTrust(accept: true, peer: peer)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(32)
+        .frame(minWidth: 300)
+    }
+}
+
+private struct GroupSwitcherView: View {
+    @ObservedObject var mesh: MeshManager
+    @Binding var knownGroups: [ChatGroup]
+    @Environment(\.dismiss) private var dismiss
+    @State private var newGroupName = ""
+    @State private var newGroupIsRelay = false
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Switch group") {
+                    ForEach(knownGroups) { group in
+                        Button {
+                            mesh.switchGroup(to: group)
+                            dismiss()
+                        } label: {
+                            HStack {
+                                Text(group.name)
+                                if group.isHostRelay {
+                                    Spacer()
+                                    Text("relay")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                }
+                Section("New group") {
+                    TextField("Group name", text: $newGroupName)
+                    Toggle("Host/relay mode (larger groups)", isOn: $newGroupIsRelay)
+                    Button("Create & Join") {
+                        guard !newGroupName.isEmpty else { return }
+                        let group = ChatGroup(
+                            name: newGroupName,
+                            isHostRelay: newGroupIsRelay,
+                            hostPeerID: newGroupIsRelay ? DiscoveredPeer.stableID(for: mesh.localPeerID) : nil
+                        )
+                        knownGroups.append(group)
+                        mesh.switchGroup(to: group)
+                        dismiss()
+                    }
+                    .disabled(newGroupName.isEmpty)
+                }
+            }
+            .navigationTitle("Groups")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
+        }
+    }
+}

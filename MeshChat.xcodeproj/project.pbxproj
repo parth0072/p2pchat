@@ -1,0 +1,290 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		2EBC8B5BDDB0BC56C98F7421 /* MeshManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4BE4B0CE5447347070B651B /* MeshManager.swift */; };
+		46769D02D59116E98AA45538 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFAB9440A9A558FAE63B4E22 /* Models.swift */; };
+		5E42B6EB59A68B533675C035 /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 357AECFFD009DAE6310E9D15 /* ChatView.swift */; };
+		74EB0CDE111D867AD220ACFE /* ChatApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79EBDAC8592D270E179E127A /* ChatApp.swift */; };
+		A8DE1029AFBC778BA5389058 /* PeerListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7FAB808B7E4B64D6CDE9499 /* PeerListView.swift */; };
+		DBED409F40541B994E5C70AA /* Persistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71E2B4579863C58ED59978D6 /* Persistence.swift */; };
+		A419C8FA113F575547BC954A /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9CDDFF31C81E3ADD5001473 /* ProfileView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		1730810B724F663A5C62119E /* MeshChat.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MeshChat.entitlements; sourceTree = "<group>"; };
+		357AECFFD009DAE6310E9D15 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
+		689CA7E77F2E6B91AE38D1F9 /* MeshChat.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MeshChat.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		71E2B4579863C58ED59978D6 /* Persistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Persistence.swift; sourceTree = "<group>"; };
+		79EBDAC8592D270E179E127A /* ChatApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatApp.swift; sourceTree = "<group>"; };
+		D5E6C52DEE5CC019C248F31B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		D7FAB808B7E4B64D6CDE9499 /* PeerListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeerListView.swift; sourceTree = "<group>"; };
+		DFAB9440A9A558FAE63B4E22 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		F4BE4B0CE5447347070B651B /* MeshManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshManager.swift; sourceTree = "<group>"; };
+		F9CDDFF31C81E3ADD5001473 /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		9A5698EA343592952595FBA5 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		5480A95C70D8BD8E78D4A6A8 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				689CA7E77F2E6B91AE38D1F9 /* MeshChat.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		75017F245290ADAB46AE1DED /* MeshChat */ = {
+			isa = PBXGroup;
+			children = (
+				79EBDAC8592D270E179E127A /* ChatApp.swift */,
+				DFAB9440A9A558FAE63B4E22 /* Models.swift */,
+				F4BE4B0CE5447347070B651B /* MeshManager.swift */,
+				71E2B4579863C58ED59978D6 /* Persistence.swift */,
+				D7FAB808B7E4B64D6CDE9499 /* PeerListView.swift */,
+				357AECFFD009DAE6310E9D15 /* ChatView.swift */,
+				F9CDDFF31C81E3ADD5001473 /* ProfileView.swift */,
+				D5E6C52DEE5CC019C248F31B /* Info.plist */,
+				1730810B724F663A5C62119E /* MeshChat.entitlements */,
+			);
+			path = MeshChat;
+			sourceTree = "<group>";
+		};
+		94B41F7F2925147FA92CC82B = {
+			isa = PBXGroup;
+			children = (
+				75017F245290ADAB46AE1DED /* MeshChat */,
+				5480A95C70D8BD8E78D4A6A8 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		3FF6E1C0EECAEF038DF09FC1 /* MeshChat */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C7F3BBBCCB97B11533F0A5DC /* Build configuration list for PBXNativeTarget "MeshChat" */;
+			buildPhases = (
+				4FBA6943642B1D937D40E044 /* Sources */,
+				9A5698EA343592952595FBA5 /* Frameworks */,
+				C49A0FD0824B52103D32DB41 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = MeshChat;
+			productName = MeshChat;
+			productReference = 689CA7E77F2E6B91AE38D1F9 /* MeshChat.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		E68D73F363078C93241450BB /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					3FF6E1C0EECAEF038DF09FC1 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = 8DC92B5386DB79DE567CCBF2 /* Build configuration list for PBXProject "MeshChat" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 94B41F7F2925147FA92CC82B;
+			productRefGroup = 5480A95C70D8BD8E78D4A6A8 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				3FF6E1C0EECAEF038DF09FC1 /* MeshChat */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		C49A0FD0824B52103D32DB41 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		4FBA6943642B1D937D40E044 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				74EB0CDE111D867AD220ACFE /* ChatApp.swift in Sources */,
+				46769D02D59116E98AA45538 /* Models.swift in Sources */,
+				2EBC8B5BDDB0BC56C98F7421 /* MeshManager.swift in Sources */,
+				DBED409F40541B994E5C70AA /* Persistence.swift in Sources */,
+				A8DE1029AFBC778BA5389058 /* PeerListView.swift in Sources */,
+				5E42B6EB59A68B533675C035 /* ChatView.swift in Sources */,
+				A419C8FA113F575547BC954A /* ProfileView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		4931FD02EB6572AB2E5F71CA /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		5708CA4B423FED9DA5AA9E01 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = MeshChat/MeshChat.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = KS8PVU55P3;
+				"ENABLE_HARDENED_RUNTIME[sdk=macosx*]" = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = MeshChat/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.app.test;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		68015F8CE33E5D6E6F334512 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		9098BF6836097B72D27DDE33 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = MeshChat/MeshChat.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = KS8PVU55P3;
+				"ENABLE_HARDENED_RUNTIME[sdk=macosx*]" = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = MeshChat/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.app.test;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		8DC92B5386DB79DE567CCBF2 /* Build configuration list for PBXProject "MeshChat" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				68015F8CE33E5D6E6F334512 /* Debug */,
+				4931FD02EB6572AB2E5F71CA /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C7F3BBBCCB97B11533F0A5DC /* Build configuration list for PBXNativeTarget "MeshChat" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9098BF6836097B72D27DDE33 /* Debug */,
+				5708CA4B423FED9DA5AA9E01 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = E68D73F363078C93241450BB /* Project object */;
+}
