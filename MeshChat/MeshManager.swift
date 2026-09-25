@@ -38,13 +38,6 @@ final class MeshManager: NSObject, ObservableObject {
     @Published var currentGroup: ChatGroup
     @Published private(set) var typingPeerIDs: Set<String> = []
 
-    /// Rolling log of discovery/connect/trust/route events for the Debug
-    /// view — lets you see *why* a device isn't connecting or where a
-    /// message is actually routing instead of guessing. Capped and pruned
-    /// FIFO so a long session doesn't grow this unbounded.
-    @Published private(set) var debugLog: [DebugLogEntry] = []
-    private let debugLogCap = 300
-
     /// Reconstructed mesh topology, gossiped by every peer: topologyEdges[id]
     /// = the set of peer IDs that peer is directly
     /// connected to. Merges what I know locally with what everyone else has
@@ -139,17 +132,17 @@ final class MeshManager: NSObject, ObservableObject {
     }
 
     /// Real structured logging (os.Logger / the unified logging system)
-    /// instead of bare print(): every entry gets a subsystem + a category
-    /// matching DebugLogEntry.Category, so in Console.app (or Xcode's
-    /// console) you can filter to just "route" or just "error", the level
-    /// (debug/info/error) drives the icon/color Console.app shows, and the
-    /// log survives after the process exits — none of which a plain print()
-    /// statement gives you. `\(message, privacy: .public)` is required or
-    /// the unified logging system redacts dynamic content as "<private>" by
-    /// default, which would make copied logs useless.
+    /// instead of bare print(): every entry gets a subsystem + a category, so
+    /// in Console.app (or Xcode's console) you can filter to just "route" or
+    /// just "error", the level (debug/info/error) drives the icon/color
+    /// Console.app shows, and the log survives after the process exits —
+    /// none of which a plain print() statement gives you.
+    /// `\(message, privacy: .public)` is required or the unified logging
+    /// system redacts dynamic content as "<private>" by default, which would
+    /// make copied logs useless.
     private static let logSubsystem = Bundle.main.bundleIdentifier ?? "com.meshchat.app"
 
-    private static let loggers: [DebugLogEntry.Category: Logger] = [
+    private static let loggers: [LogCategory: Logger] = [
         .discovery: Logger(subsystem: logSubsystem, category: "discovery"),
         .connect: Logger(subsystem: logSubsystem, category: "connect"),
         .route: Logger(subsystem: logSubsystem, category: "route"),
@@ -157,12 +150,7 @@ final class MeshManager: NSObject, ObservableObject {
         .error: Logger(subsystem: logSubsystem, category: "error")
     ]
 
-    private func log(_ category: DebugLogEntry.Category, _ message: String) {
-        debugLog.append(DebugLogEntry(timestamp: Date(), category: category, message: message))
-        if debugLog.count > debugLogCap {
-            debugLog.removeFirst(debugLog.count - debugLogCap)
-        }
-
+    private func log(_ category: LogCategory, _ message: String) {
         let logger = Self.loggers[category] ?? Logger(subsystem: Self.logSubsystem, category: "mesh")
         switch category {
         case .error:
@@ -172,10 +160,6 @@ final class MeshManager: NSObject, ObservableObject {
         case .discovery, .route:
             logger.debug("\(message, privacy: .public)")
         }
-    }
-
-    func clearDebugLog() {
-        debugLog.removeAll()
     }
 
     /// Best-effort human-readable name for a stable peer ID, for log
