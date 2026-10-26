@@ -1,10 +1,11 @@
 name: Build MeshChat
 
+# Builds only when a version tag is pushed (e.g. `git tag v1.0.0 && git push
+# origin v1.0.0`), or when run by hand from the Actions tab. Ordinary commits
+# and pull requests do not trigger a build.
 on:
   push:
-    branches: ["main"]
-  pull_request:
-    branches: ["main"]
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -20,11 +21,25 @@ jobs:
       - name: Show Xcode version
         run: xcodebuild -version
 
+      # v1.2.3 -> 1.2.3 (a "-beta" style suffix is dropped, since the app's
+      # version string must be plain numbers). Manual runs fall back to 1.0.
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            V="${GITHUB_REF_NAME#v}"
+            V="${V%%-*}"
+          else
+            V="1.0"
+          fi
+          echo "value=$V" >> "$GITHUB_OUTPUT"
+          echo "Building version $V"
+
       # CODE_SIGNING_ALLOWED=NO skips code signing entirely — CI runners
       # don't have your Apple Developer certificate/team installed, and
       # don't need one just to produce a build. The resulting .app is
-      # unsigned, so on the receiving Mac it needs the same Gatekeeper
-      # bypass as any other unsigned/ad-hoc app (right-click > Open, or
+      # unsigned (see the ad-hoc step below), so on the receiving Mac it needs
+      # the same Gatekeeper bypass as any other unsigned app (install.sh, or
       # `xattr -cr MeshChat.app`).
       - name: Build for macOS
         run: |
@@ -34,6 +49,8 @@ jobs:
             -configuration Release \
             -destination 'platform=macOS' \
             -derivedDataPath build \
+            MARKETING_VERSION="${{ steps.version.outputs.value }}" \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
 
       # Ad-hoc signature ("-" identity, no certificate or paid account
@@ -52,6 +69,7 @@ jobs:
           cd build/Build/Products/Release
           ditto -c -k --sequesterRsrc --keepParent MeshChat.app MeshChat-macOS.zip
 
+      # Kept for manual runs (no release is created for those).
       - name: Upload macOS build artifact
         uses: actions/upload-artifact@v4
         with:
@@ -59,27 +77,28 @@ jobs:
           path: build/Build/Products/Release/MeshChat-macOS.zip
           retention-days: 14
 
-      # Actions artifacts (above) require a logged-in GitHub session to
-      # download, so they don't work from a plain `curl` install script.
-      # Publishing to a rolling "latest" Release instead makes the zip a
-      # public, unauthenticated URL that install.sh can fetch directly.
-      # Only do this on actual pushes to main, not on PR builds.
-      - name: Publish/update "latest" release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      # A real, versioned GitHub Release for the pushed tag. Release assets
+      # are public, unauthenticated URLs, which is what lets install.sh fetch
+      # `releases/latest/download/MeshChat-macOS.zip` with plain curl.
+      # Tags containing "-" (v1.2.0-beta) are published as pre-releases and
+      # are not picked up as "latest".
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest
-          name: Latest macOS build
+          name: MeshChat ${{ github.ref_name }}
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make_latest: ${{ !contains(github.ref_name, '-') }}
           body: |
-            Automated macOS build from commit ${{ github.sha }} (macOS 14+, Apple silicon and Intel).
+            macOS 14+ (Apple silicon and Intel). Not notarized (no paid Apple account).
 
             **Install (recommended):**
             ```
             curl -fsSL https://raw.githubusercontent.com/parth0072/p2pchat/main/install.sh | bash
             ```
 
-            **Or manually:** download `MeshChat-macOS.zip`, unzip it, then run `xattr -cr MeshChat.app` and open it. The app is not notarized (no paid Apple account), so macOS blocks a browser-downloaded copy until you do this — or use System Settings > Privacy & Security > Open Anyway.
-          make_latest: true
+            **Or manually:** download `MeshChat-macOS.zip`, unzip it, run `xattr -cr MeshChat.app`, then open it. (Or open it once and use System Settings > Privacy & Security > Open Anyway.)
           files: build/Build/Products/Release/MeshChat-macOS.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

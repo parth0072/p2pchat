@@ -9,7 +9,7 @@
 set -e
 
 REPO="parth0072/p2pchat"
-ZIP_URL="https://github.com/$REPO/releases/download/latest/MeshChat-macOS.zip"
+ZIP_URL="https://github.com/$REPO/releases/latest/download/MeshChat-macOS.zip"
 INSTALL_DIR="$HOME/Applications"
 TMP_DIR=$(mktemp -d)
 

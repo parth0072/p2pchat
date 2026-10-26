@@ -12,7 +12,7 @@ the nearby mesh as the automatic fallback.
 
 ## Download & run (macOS)
 
-GitHub Actions builds the Mac app on every push to `main` and publishes it as the rolling [**latest release**](https://github.com/parth0072/p2pchat/releases/tag/latest). Requires **macOS 14 or newer**; you need two devices running MeshChat to chat.
+GitHub Actions builds the Mac app whenever a version tag (like `v1.0.0`) is pushed and publishes it as a GitHub Release; the newest one is the [**latest release**](https://github.com/parth0072/p2pchat/releases/latest). Requires **macOS 14 or newer**; you need two devices running MeshChat to chat.
 
 **Easiest — one command in Terminal:**
 
@@ -24,7 +24,7 @@ It downloads the latest build, installs it to `~/Applications/MeshChat.app`, and
 
 **Manual download:**
 
-1. Download [`MeshChat-macOS.zip`](https://github.com/parth0072/p2pchat/releases/download/latest/MeshChat-macOS.zip) and unzip it.
+1. Download [`MeshChat-macOS.zip`](https://github.com/parth0072/p2pchat/releases/latest/download/MeshChat-macOS.zip) and unzip it.
 2. In Terminal run `xattr -cr ~/Downloads/MeshChat.app` (adjust the path), then open the app. Or open it once, then go to System Settings > Privacy & Security > **Open Anyway**.
 
 The app isn't notarized — that needs a paid Apple Developer account — so macOS shows an "unidentified developer" warning for browser-downloaded copies. The steps above are the workaround; the `curl` command avoids the warning entirely.
@@ -48,7 +48,16 @@ Two devices just need to be within Wi-Fi/Bluetooth range of each other — not o
 - `MeshChat/` — app source. See [`MeshChat/README.md`](MeshChat/README.md) for the full architecture, a file-by-file breakdown, and the roadmap.
 - `MeshChat.xcodeproj` — the Xcode project.
 - `install.sh` / `run-macos.sh` — install/launch scripts for prebuilt macOS releases.
-- `.github/workflows/build.yml` — CI: builds on every push to `main`, publishes a rolling "latest" release.
+- `.github/workflows/build.yml` — CI: builds only when a `v*` tag is pushed (or run by hand), and publishes a versioned GitHub Release.
+
+## Releasing a new version
+
+```
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+That triggers the build and publishes the release (a tag with a suffix like `v1.1.0-beta` is published as a pre-release and isn't offered as "latest"). Ordinary commits and pull requests don't build.
 
 ## Documentation
 
