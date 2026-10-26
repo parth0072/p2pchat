@@ -36,6 +36,17 @@ jobs:
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
 
+      # Ad-hoc signature ("-" identity, no certificate or paid account
+      # needed). Apple silicon refuses to launch a binary with no valid
+      # signature at all, and the embedded WebRTC framework needs to be
+      # signed consistently with the app. This does NOT make Gatekeeper
+      # trust the app — install.sh / `xattr -cr` still handles that — it
+      # just keeps the unsigned build launchable.
+      - name: Ad-hoc sign the app
+        run: |
+          codesign --force --deep --sign - build/Build/Products/Release/MeshChat.app
+          codesign --verify --deep --verbose=2 build/Build/Products/Release/MeshChat.app || true
+
       - name: Zip the app
         run: |
           cd build/Build/Products/Release
@@ -59,7 +70,15 @@ jobs:
         with:
           tag_name: latest
           name: Latest macOS build
-          body: Automated build from commit ${{ github.sha }}. Unsigned — install via install.sh or `xattr -cr` after unzipping.
+          body: |
+            Automated macOS build from commit ${{ github.sha }} (macOS 14+, Apple silicon and Intel).
+
+            **Install (recommended):**
+            ```
+            curl -fsSL https://raw.githubusercontent.com/parth0072/p2pchat/main/install.sh | bash
+            ```
+
+            **Or manually:** download `MeshChat-macOS.zip`, unzip it, then run `xattr -cr MeshChat.app` and open it. The app is not notarized (no paid Apple account), so macOS blocks a browser-downloaded copy until you do this — or use System Settings > Privacy & Security > Open Anyway.
           make_latest: true
           files: build/Build/Products/Release/MeshChat-macOS.zip
         env:

@@ -10,17 +10,30 @@ the nearby mesh as the automatic fallback.
 
 ![Build MeshChat](https://github.com/parth0072/p2pchat/actions/workflows/build.yml/badge.svg)
 
-## Install (macOS)
+## Download & run (macOS)
 
-Prebuilt, unsigned macOS builds publish automatically from every push to `main`:
+GitHub Actions builds the Mac app on every push to `main` and publishes it as the rolling [**latest release**](https://github.com/parth0072/p2pchat/releases/tag/latest). Requires **macOS 14 or newer**; you need two devices running MeshChat to chat.
+
+**Easiest — one command in Terminal:**
 
 ```
 curl -fsSL https://raw.githubusercontent.com/parth0072/p2pchat/main/install.sh | bash
 ```
 
-Downloads the latest build, strips the Gatekeeper quarantine flag (it's unsigned, so this is required), and installs it to `~/Applications`.
+It downloads the latest build, installs it to `~/Applications/MeshChat.app`, and launches it. Run the same command again any time to update.
 
-Already have a build artifact downloaded from a specific [Actions run](https://github.com/parth0072/p2pchat/actions) instead? Put `run-macos.sh` next to the zip and run it there.
+**Manual download:**
+
+1. Download [`MeshChat-macOS.zip`](https://github.com/parth0072/p2pchat/releases/download/latest/MeshChat-macOS.zip) and unzip it.
+2. In Terminal run `xattr -cr ~/Downloads/MeshChat.app` (adjust the path), then open the app. Or open it once, then go to System Settings > Privacy & Security > **Open Anyway**.
+
+The app isn't notarized — that needs a paid Apple Developer account — so macOS shows an "unidentified developer" warning for browser-downloaded copies. The steps above are the workaround; the `curl` command avoids the warning entirely.
+
+On first launch, allow **Local Network**, **Bluetooth** and **Notifications** when asked (and **Camera** if you want to scan QR codes). Without them, nearby discovery can't work.
+
+Built a zip yourself from a specific [Actions run](https://github.com/parth0072/p2pchat/actions) instead? Put `run-macos.sh` next to it and run it there.
+
+For iPhone/iPad, build from source in Xcode (below) — App Store/TestFlight distribution needs a paid account.
 
 ## Build from source (iOS or macOS)
 
