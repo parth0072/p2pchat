@@ -52,13 +52,66 @@ enum LinkSignalCodec {
         return prefix + packed.base64EncodedString()
     }
 
+    /// Tolerant of how codes actually get pasted: line breaks inserted by a
+    /// messenger, stray spaces, or the code embedded in a longer sentence.
     static func decode(_ text: String) -> LinkSignal? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.hasPrefix(prefix) else { return nil }
-        let body = String(trimmed.dropFirst(prefix.count))
+        let candidates = candidateStrings(from: text)
+        for candidate in candidates {
+            if let signal = decodeExact(candidate) { return signal }
+        }
+        return nil
+    }
+
+    private static func candidateStrings(from text: String) -> [String] {
+        var results: [String] = []
+        // 1) The whole paste with all whitespace removed (handles wrapped lines).
+        let compact = text.filter { !$0.isWhitespace }
+        if let range = compact.range(of: prefix) {
+            results.append(String(compact[range.lowerBound...]))
+        }
+        // 2) Just the whitespace-delimited token containing the prefix
+        //    (handles a code followed by other words).
+        for token in text.split(whereSeparator: { $0.isWhitespace }) where token.contains(prefix) {
+            if let range = token.range(of: prefix) {
+                results.append(String(token[range.lowerBound...]))
+            }
+        }
+        return results
+    }
+
+    private static func decodeExact(_ candidate: String) -> LinkSignal? {
+        guard candidate.hasPrefix(prefix) else { return nil }
+        let body = String(candidate.dropFirst(prefix.count))
         guard let packed = Data(base64Encoded: body, options: .ignoreUnknownCharacters) else { return nil }
         let json = (try? (packed as NSData).decompressed(using: .zlib) as Data) ?? packed
         return try? JSONDecoder().decode(LinkSignal.self, from: json)
+    }
+}
+
+/// Optional TURN relay, supplied by the user. Needed when two devices are on
+/// networks that block direct peer-to-peer traffic (very common on mobile
+/// data); the relay only forwards traffic that is already encrypted and
+/// stores nothing. Kept in the Keychain because it holds a credential.
+struct RelaySettings: Codable, Equatable {
+    var url = ""
+    var username = ""
+    var credential = ""
+}
+
+enum RelayStore {
+    private static let service = "app-chat.relay"
+    private static let account = "turn"
+
+    static func load() -> RelaySettings? {
+        guard let data = KeychainStore.load(service: service, account: account),
+              let settings = try? JSONDecoder().decode(RelaySettings.self, from: data),
+              !settings.url.isEmpty else { return nil }
+        return settings
+    }
+
+    static func save(_ settings: RelaySettings) {
+        guard let data = try? JSONEncoder().encode(settings) else { return }
+        KeychainStore.save(data, service: service, account: account)
     }
 }
 
@@ -83,13 +136,13 @@ final class MeshRTCLink: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDele
     private let lock = NSLock()
     private var gatherWaiter: CheckedContinuation<Void, Never>?
 
-    init?(connectionID: String, factory: RTCPeerConnectionFactory, owner: WebRTCManager) {
+    init?(connectionID: String, factory: RTCPeerConnectionFactory, iceServers: [RTCIceServer], owner: WebRTCManager) {
         self.connectionID = connectionID
         self.owner = owner
         super.init()
 
         let config = RTCConfiguration()
-        config.iceServers = [RTCIceServer(urlStrings: rtcStunServers)]
+        config.iceServers = iceServers
         config.sdpSemantics = .unifiedPlan
         // Gather once and let it finish before the offer/answer is shared,
         // so the SDP is complete and no candidate trickling (which would
@@ -186,6 +239,13 @@ final class MeshRTCLink: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDele
         pc?.close()
     }
 
+    private func reportProgress(_ text: String) {
+        Task { @MainActor [weak self] in
+            guard let self, let owner = self.owner else { return }
+            owner.linkProgress(text)
+        }
+    }
+
     private func reportDown() {
         Task { @MainActor [weak self] in
             guard let self, let owner = self.owner else { return }
@@ -205,7 +265,14 @@ final class MeshRTCLink: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDele
 
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {
         switch newState {
-        case .failed, .closed:
+        case .checking:
+            reportProgress("Checking network routes between the two devices…")
+        case .connected, .completed:
+            reportProgress("Network route found — opening the chat channel…")
+        case .failed:
+            reportProgress("No direct route between these two networks (common on mobile data or strict Wi-Fi). Try both devices on the same Wi-Fi, or add a relay under Advanced.")
+            reportDown()
+        case .closed:
             reportDown()
         case .disconnected:
             // Often a momentary blip that heals itself — only give up if it
@@ -286,12 +353,25 @@ final class WebRTCManager {
     /// (remote, isUp)
     var onLinkChange: (@MainActor (LinkRemote, Bool) -> Void)?
     var onData: (@MainActor (Data, LinkRemote) -> Void)?
+    /// Human-readable connection progress ("Checking network routes…").
+    var onProgress: (@MainActor (String) -> Void)?
+
+    /// Optional user-supplied TURN relay (see RelaySettings).
+    var relay: RelaySettings? = RelayStore.load()
+
+    private var iceServers: [RTCIceServer] {
+        var servers = [RTCIceServer(urlStrings: rtcStunServers)]
+        if let relay, !relay.url.isEmpty {
+            servers.append(RTCIceServer(urlStrings: [relay.url], username: relay.username, credential: relay.credential))
+        }
+        return servers
+    }
 
     // MARK: Negotiation
 
     func makeOffer(myID: String, myName: String, myKey: String) async -> LinkSignal? {
         let cid = UUID().uuidString
-        guard let link = MeshRTCLink(connectionID: cid, factory: factory, owner: self), link.makeChannel() else {
+        guard let link = MeshRTCLink(connectionID: cid, factory: factory, iceServers: iceServers, owner: self), link.makeChannel() else {
             return nil
         }
         pending[cid] = link
@@ -312,7 +392,7 @@ final class WebRTCManager {
         guard offer.kind == .offer else { return nil }
         let cid = offer.cid
         discard(cid)
-        guard let link = MeshRTCLink(connectionID: cid, factory: factory, owner: self) else { return nil }
+        guard let link = MeshRTCLink(connectionID: cid, factory: factory, iceServers: iceServers, owner: self) else { return nil }
         link.remote = LinkRemote(id: offer.fromID, name: offer.fromName, publicKey: offer.publicKey)
         pending[cid] = link
 
@@ -367,6 +447,10 @@ final class WebRTCManager {
         }
         rtcLogger.info("Link up: \(remote.name, privacy: .public)")
         onLinkChange?(remote, true)
+    }
+
+    fileprivate func linkProgress(_ text: String) {
+        onProgress?(text)
     }
 
     fileprivate func linkClosed(_ link: MeshRTCLink) {

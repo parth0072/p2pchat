@@ -181,6 +181,16 @@ final class ProfileStore: ObservableObject {
         }
     }
 
+    /// Records that the first-run profile prompt has been shown, so it never
+    /// reopens on its own again — whether the user saved or just dismissed
+    /// it. (Before this, only Save cleared the flag, so Cancel — or simply
+    /// navigating back to the peer list — brought the screen up again every
+    /// time.) The default name keeps being used until they change it.
+    func markFirstRunShown() {
+        guard isFirstRun else { return }
+        persist()
+    }
+
     var avatarURL: URL? {
         guard profile.avatarFileName != nil, let dir = Self.profileDirectory() else { return nil }
         return dir.appendingPathComponent(avatarFileName)

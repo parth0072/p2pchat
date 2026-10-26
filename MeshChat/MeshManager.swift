@@ -108,6 +108,10 @@ final class MeshManager: NSObject, ObservableObject {
     /// Peers with an open WebRTC link right now.
     @Published private(set) var internetLinkedPeerIDs: Set<String> = []
 
+    /// What the most recent link attempt is doing ("Checking network
+    /// routes…", "No direct route…"), shown in the Internet Chat sheet.
+    @Published private(set) var internetLinkProgress: String?
+
     private let webrtc = WebRTCManager()
     private var pathMonitor: NWPathMonitor?
     private var internetNegotiationCooldown: [String: Date] = [:]
@@ -448,6 +452,10 @@ final class MeshManager: NSObject, ObservableObject {
         webrtc.onData = { [weak self] data, remote in
             self?.handleInternetData(data, from: remote)
         }
+        webrtc.onProgress = { [weak self] text in
+            self?.internetLinkProgress = text
+            self?.log(.connect, "Internet link: \(text)")
+        }
 
         guard pathMonitor == nil else { return }
         let monitor = NWPathMonitor()
@@ -474,6 +482,7 @@ final class MeshManager: NSObject, ObservableObject {
 
     private func internetLinkChanged(_ remote: LinkRemote, isUp: Bool) {
         if isUp {
+            internetLinkProgress = nil
             learnPublicKey(remote.publicKey, for: remote.id)
             internetLinkedPeerIDs.insert(remote.id)
             internetRemoteNames[remote.id] = remote.name
@@ -643,13 +652,34 @@ final class MeshManager: NSObject, ObservableObject {
         receiveChat(envelope, viaInternet: true)
     }
 
+    // MARK: Optional relay
+
+    /// The user-supplied TURN relay, if any (empty fields when unset).
+    var relaySettings: RelaySettings {
+        webrtc.relay ?? RelaySettings()
+    }
+
+    /// Saves (or clears, when the URL is empty) the optional TURN relay used
+    /// for new internet links. Existing links are unaffected.
+    func saveRelay(_ settings: RelaySettings) {
+        let cleaned = RelaySettings(
+            url: settings.url.trimmingCharacters(in: .whitespacesAndNewlines),
+            username: settings.username.trimmingCharacters(in: .whitespacesAndNewlines),
+            credential: settings.credential
+        )
+        RelayStore.save(cleaned)
+        webrtc.relay = cleaned.url.isEmpty ? nil : cleaned
+        log(.connect, cleaned.url.isEmpty ? "Relay cleared" : "Relay set: \(cleaned.url)")
+    }
+
     // MARK: Manual (QR / pasted text) internet links
 
     enum InternetCodeResult {
-        /// I accepted an invite; this reply code must go back to the inviter.
-        case reply(String)
+        /// I accepted an invite; this reply code must go back to the inviter
+        /// (peerID/name identify the inviter).
+        case reply(code: String, peerID: String, name: String)
         /// The inviter applied my reply; the link is now connecting.
-        case linked(String)
+        case linked(peerID: String, name: String)
         case failure(String)
     }
 
@@ -697,7 +727,7 @@ final class MeshManager: NSObject, ObservableObject {
                 return .failure("Couldn't create a reply. Try again.")
             }
             log(.route, "Accepted an internet invite from \(signal.fromName) (reply code ready)")
-            return .reply(code)
+            return .reply(code: code, peerID: signal.fromID, name: signal.fromName)
         case .answer:
             learnPublicKey(signal.publicKey, for: signal.fromID)
             let applied = await webrtc.complete(with: signal)
@@ -705,7 +735,7 @@ final class MeshManager: NSObject, ObservableObject {
                 return .failure("No open invite matches this reply — it may have expired. Create a new invite.")
             }
             log(.route, "Applied reply from \(signal.fromName) — connecting")
-            return .linked(signal.fromName)
+            return .linked(peerID: signal.fromID, name: signal.fromName)
         }
     }
 

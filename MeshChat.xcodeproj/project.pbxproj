@@ -20,22 +20,8 @@
 		61C0E8A3D5B7294F8A1E6C03 /* RTCTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B58F3D1A7E2C64095D8B1F72 /* RTCTransport.swift */; };
 		0E94B7C2A6D18F53C7A02E49 /* InternetLinkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83A5D6F1C0B94E27A1D8C536 /* InternetLinkView.swift */; };
 		9E1A5C37B4D82F60A3C71D95 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = 2C8D4F6A1B93E75D0A6C8E21 /* WebRTC */; };
-		4A7F2E9C6B1D8035E2F4A6C8 /* WebRTC in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 2C8D4F6A1B93E75D0A6C8E21 /* WebRTC */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		C17D5E8A2B4F6093A1E7D3C5 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E2A9B7D0C4F8163B6A1E9D4 /* QRScannerView.swift */; };
 /* End PBXBuildFile section */
-
-/* Begin PBXCopyFilesBuildPhase section */
-		D3B6081E5F4A29C7B0E3D1F6 /* Embed Frameworks */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 10;
-			files = (
-				4A7F2E9C6B1D8035E2F4A6C8 /* WebRTC in Embed Frameworks */,
-			);
-			name = "Embed Frameworks";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		1730810B724F663A5C62119E /* MeshChat.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MeshChat.entitlements; sourceTree = "<group>"; };
@@ -53,6 +39,7 @@
 		F4C72C76718D21EEF4CFC0AA /* CryptoIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CryptoIdentity.swift; sourceTree = "<group>"; };
 		B58F3D1A7E2C64095D8B1F72 /* RTCTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RTCTransport.swift; sourceTree = "<group>"; };
 		83A5D6F1C0B94E27A1D8C536 /* InternetLinkView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InternetLinkView.swift; sourceTree = "<group>"; };
+		5E2A9B7D0C4F8163B6A1E9D4 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -89,6 +76,7 @@
 				F4C72C76718D21EEF4CFC0AA /* CryptoIdentity.swift */,
 				B58F3D1A7E2C64095D8B1F72 /* RTCTransport.swift */,
 				83A5D6F1C0B94E27A1D8C536 /* InternetLinkView.swift */,
+				5E2A9B7D0C4F8163B6A1E9D4 /* QRScannerView.swift */,
 				4F86F56488FC84D5A5F4DDF3 /* Assets.xcassets */,
 				D5E6C52DEE5CC019C248F31B /* Info.plist */,
 				1730810B724F663A5C62119E /* MeshChat.entitlements */,
@@ -114,7 +102,6 @@
 				4FBA6943642B1D937D40E044 /* Sources */,
 				9A5698EA343592952595FBA5 /* Frameworks */,
 				C49A0FD0824B52103D32DB41 /* Resources */,
-				D3B6081E5F4A29C7B0E3D1F6 /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
@@ -191,6 +178,7 @@
 				AFCA054E4E296D911386203C /* CryptoIdentity.swift in Sources */,
 				61C0E8A3D5B7294F8A1E6C03 /* RTCTransport.swift in Sources */,
 				0E94B7C2A6D18F53C7A02E49 /* InternetLinkView.swift in Sources */,
+				C17D5E8A2B4F6093A1E7D3C5 /* QRScannerView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

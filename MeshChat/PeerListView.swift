@@ -138,6 +138,7 @@ struct PeerListView: View {
             mesh.start()
             if profileStore.isFirstRun {
                 showingProfile = true
+                profileStore.markFirstRunShown()
             }
         }
     }

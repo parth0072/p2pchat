@@ -21,7 +21,12 @@ struct InternetLinkView: View {
     @State private var pasted = ""
     @State private var reply: String?
     @State private var status: String?
+    @State private var statusIsError = false
     @State private var isWorking = false
+    @State private var showingScanner = false
+    @State private var relayURL = ""
+    @State private var relayUser = ""
+    @State private var relayPassword = ""
 
     var body: some View {
         NavigationStack {
@@ -37,6 +42,40 @@ struct InternetLinkView: View {
                         .foregroundStyle(.secondary)
                 }
 
+                // Result/progress lives at the TOP of the form: with an invite
+                // QR and a reply QR on screen the bottom of this sheet is
+                // easily scrolled out of view, which made a tap on Connect
+                // look like it did nothing.
+                if isWorking || status != nil {
+                    Section {
+                        HStack(alignment: .top, spacing: 8) {
+                            if isWorking {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Image(systemName: statusIsError ? "exclamationmark.triangle.fill" : "info.circle.fill")
+                                    .foregroundStyle(statusIsError ? Color.red : Color.blue)
+                            }
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(status ?? "")
+                                    .font(.subheadline)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                if let progress = mesh.internetLinkProgress {
+                                    Text(progress)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+                    }
+                } else if let progress = mesh.internetLinkProgress {
+                    Section {
+                        Text(progress)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 Section("1 · Invite someone") {
                     if let myInvite {
                         CodeBlock(title: "Your invite", code: myInvite)
@@ -47,7 +86,7 @@ struct InternetLinkView: View {
                     .disabled(isWorking)
                 }
 
-                Section("2 · Paste a code you received") {
+                Section("2 · Scan or paste a code you received") {
                     TextField("Paste an invite or reply code", text: $pasted, axis: .vertical)
                         .lineLimit(3...6)
                         .font(.caption.monospaced())
@@ -55,28 +94,90 @@ struct InternetLinkView: View {
                         .textInputAutocapitalization(.never)
                         #endif
                         .autocorrectionDisabled()
-                    HStack {
-                        Button("Paste from clipboard") { pasted = Self.clipboardText() }
-                            .buttonStyle(.borderless)
-                        Spacer()
-                        Button("Connect") { connect() }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(isWorking || pasted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    if !pasted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        if let recognized = LinkSignalCodec.decode(pasted) {
+                            Label(
+                                recognized.kind == .offer
+                                    ? "Invite from \(recognized.fromName) — press Connect"
+                                    : "Reply from \(recognized.fromName) — press Connect",
+                                systemImage: "checkmark.seal.fill"
+                            )
+                            .font(.caption)
+                            .foregroundStyle(Color.green)
+                        } else {
+                            Label("Not a valid MeshChat code (yet)", systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption)
+                                .foregroundStyle(Color.orange)
+                        }
                     }
+                    // Each button gets an explicit style so it is tapped on
+                    // its own — in a Form row, buttons left on the default
+                    // style all fire together when any part of the row is
+                    // tapped.
+                    HStack(spacing: 12) {
+                        Button {
+                            showingScanner = true
+                        } label: {
+                            Label("Scan QR", systemImage: "qrcode.viewfinder")
+                        }
+                        Button {
+                            pasted = Self.clipboardText()
+                        } label: {
+                            Label("Paste", systemImage: "doc.on.clipboard")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button {
+                        connect(with: pasted)
+                    } label: {
+                        Text("Connect")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isWorking || pasted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
                     if let reply {
-                        CodeBlock(title: "Send this reply back", code: reply)
+                        CodeBlock(title: "Show this reply to the person who invited you", code: reply)
                     }
                 }
 
-                if isWorking || status != nil {
-                    Section {
-                        HStack(spacing: 8) {
-                            if isWorking { ProgressView().controlSize(.small) }
-                            Text(status ?? "")
-                                .font(.caption)
+                Section {
+                    DisclosureGroup("Advanced: relay server (optional)") {
+                        Text("If two networks can't connect directly (common on mobile data), a TURN relay can carry the connection. It only forwards traffic that is already encrypted and stores nothing. Only one of the two devices needs it set.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        TextField("turn:your-server:3478", text: $relayURL)
+                            #if os(iOS)
+                            .textInputAutocapitalization(.never)
+                            #endif
+                            .autocorrectionDisabled()
+                        TextField("Username", text: $relayUser)
+                            #if os(iOS)
+                            .textInputAutocapitalization(.never)
+                            #endif
+                            .autocorrectionDisabled()
+                        SecureField("Password", text: $relayPassword)
+                        Button("Save relay") {
+                            mesh.saveRelay(RelaySettings(url: relayURL, username: relayUser, credential: relayPassword))
+                            statusIsError = false
+                            status = relayURL.trimmingCharacters(in: .whitespaces).isEmpty
+                                ? "Relay cleared."
+                                : "Relay saved. It applies to new invites and replies."
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+
+                if !linkedPeers.isEmpty {
+                    Section("Connected over the internet") {
+                        ForEach(linkedPeers) { peer in
+                            Label(peer.mcPeerID.displayName, systemImage: "checkmark.circle.fill")
+                                .foregroundStyle(Color.green)
                         }
                     }
                 }
+
             }
             #if os(macOS)
             .formStyle(.grouped)
@@ -91,17 +192,59 @@ struct InternetLinkView: View {
                 }
             }
         }
+        .onAppear {
+            let relay = mesh.relaySettings
+            relayURL = relay.url
+            relayUser = relay.username
+            relayPassword = relay.credential
+        }
+        .sheet(isPresented: $showingScanner) {
+            QRScannerView { code in
+                pasted = code
+                connect(with: code)
+            }
+        }
+        .onChange(of: mesh.internetLinkedPeerIDs) { oldValue, newValue in
+            guard let newID = newValue.subtracting(oldValue).first else { return }
+            let name = mesh.discoveredPeers[newID]?.mcPeerID.displayName ?? newID
+            reply = nil
+            pasted = ""
+            isWorking = false
+            statusIsError = false
+            status = "Connected to \(name) ✓ — open the chat from the peer list."
+        }
         #if os(macOS)
         .frame(minWidth: 480, minHeight: 600)
         #endif
     }
 
+    private var linkedPeers: [DiscoveredPeer] {
+        mesh.discoveredPeers.values
+            .filter { $0.viaInternet }
+            .sorted { $0.mcPeerID.displayName < $1.mcPeerID.displayName }
+    }
+
+    /// A manual link can silently fail to form (the other person never
+    /// entered the reply, or one network blocks peer-to-peer traffic) —
+    /// say so instead of leaving the sheet looking like it's still working.
+    private func watchForLink(peerID: String, name: String) {
+        Task {
+            try? await Task.sleep(nanoseconds: 30_000_000_000)
+            if !mesh.internetLinkedPeerIDs.contains(peerID) {
+                statusIsError = true
+                status = "Still not connected to \(name). Check that both steps were completed on both devices and that both are online. Some networks block direct peer-to-peer connections."
+            }
+        }
+    }
+
     private func createInvite() {
         isWorking = true
-        status = "Preparing invite…"
+        statusIsError = false
+        status = "Preparing invite… (up to ~6 seconds)"
         Task {
             let code = await mesh.createInternetInvite()
             myInvite = code
+            statusIsError = code == nil
             status = code == nil
                 ? "Couldn't create an invite. Try again."
                 : "Share this with the other person, then paste the reply they send back in step 2."
@@ -109,20 +252,24 @@ struct InternetLinkView: View {
         }
     }
 
-    private func connect() {
-        let text = pasted
+    private func connect(with text: String) {
         isWorking = true
-        status = "Working…"
+        statusIsError = false
+        status = "Connecting… (up to ~6 seconds)"
         Task {
             switch await mesh.processInternetCode(text) {
-            case .reply(let code):
+            case .reply(let code, let peerID, let name):
                 reply = code
-                status = "Send this reply back to them. You'll be connected as soon as they paste it."
-            case .linked(let name):
+                pasted = ""
+                status = "Now show the reply below to \(name): they tap Scan QR (or Paste) and then Connect on their device. You'll connect automatically."
+                watchForLink(peerID: peerID, name: name)
+            case .linked(let peerID, let name):
                 reply = nil
                 pasted = ""
                 status = "Connecting to \(name)… this takes a few seconds."
+                watchForLink(peerID: peerID, name: name)
             case .failure(let message):
+                statusIsError = true
                 status = message
             }
             isWorking = false

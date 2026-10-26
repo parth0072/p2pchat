@@ -27,6 +27,8 @@
 		<string>_app-chat._tcp</string>
 		<string>_app-chat._udp</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>The camera is used only to scan another person's invite QR code so you can chat with them over the internet. Nothing is recorded or saved.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>This app uses your local network and Bluetooth to discover and chat with nearby devices directly — no internet connection required.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
