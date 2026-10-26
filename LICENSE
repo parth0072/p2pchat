@@ -1,21 +1,40 @@
-MIT License
+MeshChat — Proprietary License
 
-Copyright (c) 2026 Parth
+Copyright (c) 2026 Parth. All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This source code and the compiled MeshChat application are proprietary. The
+source is published so it can be read, not so it can be reused.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+PERMITTED
+
+1. Downloading and running the unmodified, officially released builds of the
+   application for your own personal, non-commercial use.
+2. Viewing the source code on GitHub, including whatever the GitHub Terms of
+   Service allow for viewing (such as forking within GitHub for that purpose).
+
+NOT PERMITTED without prior written permission from the copyright holder
+
+- Copying, reproducing or redistributing the source code or the application,
+  in whole or in part.
+- Modifying, adapting, translating, or creating derivative works from them.
+- Using the source code, or any part of it, in another project or product.
+- Selling, sublicensing, renting, leasing, or otherwise commercially
+  exploiting the source code or the application.
+- Reverse engineering the compiled application, except to the extent applicable
+  law does not allow this restriction.
+- Removing or altering this notice or any copyright notice.
+
+THIRD-PARTY COMPONENTS
+
+The application includes third-party software (for example Google's WebRTC
+library). Those components remain under their own licenses, which are not
+changed by this one.
+
+NO WARRANTY
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

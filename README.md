@@ -51,7 +51,7 @@ Two devices just need to be within Wi-Fi/Bluetooth range of each other — not o
 - `.github/workflows/build.yml` — CI: builds only when a `v*` tag is pushed (or run by hand), and publishes a versioned GitHub Release.
 ## License
 
-[MIT](LICENSE). The app bundles Google's WebRTC library (via [`stasel/WebRTC`](https://github.com/stasel/WebRTC)), which is distributed under its own BSD-style license.
+Proprietary — all rights reserved; see [LICENSE](LICENSE). You may download and run the released builds for personal use and read the source, but may not copy, modify, redistribute, or reuse it. The app bundles Google's WebRTC library (via [`stasel/WebRTC`](https://github.com/stasel/WebRTC)), which stays under its own BSD-style license.
 
 ## Documentation
 
