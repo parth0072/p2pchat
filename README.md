@@ -49,15 +49,9 @@ Two devices just need to be within Wi-Fi/Bluetooth range of each other — not o
 - `MeshChat.xcodeproj` — the Xcode project.
 - `install.sh` / `run-macos.sh` — install/launch scripts for prebuilt macOS releases.
 - `.github/workflows/build.yml` — CI: builds only when a `v*` tag is pushed (or run by hand), and publishes a versioned GitHub Release.
+## License
 
-## Releasing a new version
-
-```
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-That triggers the build and publishes the release (a tag with a suffix like `v1.1.0-beta` is published as a pre-release and isn't offered as "latest"). Ordinary commits and pull requests don't build.
+[MIT](LICENSE). The app bundles Google's WebRTC library (via [`stasel/WebRTC`](https://github.com/stasel/WebRTC)), which is distributed under its own BSD-style license.
 
 ## Documentation
 
