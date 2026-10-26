@@ -8,6 +8,7 @@ struct PeerListView: View {
     @State var showingGroupSwitcher = false
     @State var showingProfile = false
     @State var showingDiscovery = false
+    @State var showingInternet = false
     @Binding var knownGroups: [ChatGroup]
 
     private var sortedPeers: [DiscoveredPeer] {
@@ -66,6 +67,13 @@ struct PeerListView: View {
                     Label("Groups", systemImage: "person.3")
                 }
             }
+            ToolbarItem {
+                Button {
+                    showingInternet = true
+                } label: {
+                    Label("Internet", systemImage: "globe")
+                }
+            }
             #else
             ToolbarItem(placement: .navigationBarLeading) {
                 Button {
@@ -88,6 +96,13 @@ struct PeerListView: View {
                     Label("Groups", systemImage: "person.3")
                 }
             }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    showingInternet = true
+                } label: {
+                    Label("Internet", systemImage: "globe")
+                }
+            }
             #endif
         }
         .sheet(isPresented: $showingGroupSwitcher) {
@@ -98,6 +113,9 @@ struct PeerListView: View {
         }
         .sheet(isPresented: $showingDiscovery) {
             DiscoveryView(mesh: mesh)
+        }
+        .sheet(isPresented: $showingInternet) {
+            InternetLinkView(mesh: mesh)
         }
         .sheet(item: $mesh.pendingTrustRequest) { peer in
             TrustPromptView(mesh: mesh, peer: peer)
@@ -114,6 +132,7 @@ struct PeerListView: View {
             showingGroupSwitcher = false
             showingProfile = false
             showingDiscovery = false
+            showingInternet = false
         }
         .onAppear {
             mesh.start()
@@ -183,6 +202,11 @@ private struct PeerRow: View {
                         .foregroundStyle(.secondary)
                     if peer.isRelayed {
                         Text("· via relay")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if peer.viaInternet {
+                        Text("· internet")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

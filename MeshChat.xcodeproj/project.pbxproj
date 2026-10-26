@@ -17,7 +17,25 @@
 		7C07393F9C99906A66857C24 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 4F86F56488FC84D5A5F4DDF3 /* Assets.xcassets */; };
 		0478613A7B0BC6EFFE8162D0 /* DiscoveryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30C5B07E106DD801927FC60A /* DiscoveryView.swift */; };
 		AFCA054E4E296D911386203C /* CryptoIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4C72C76718D21EEF4CFC0AA /* CryptoIdentity.swift */; };
+		61C0E8A3D5B7294F8A1E6C03 /* RTCTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B58F3D1A7E2C64095D8B1F72 /* RTCTransport.swift */; };
+		0E94B7C2A6D18F53C7A02E49 /* InternetLinkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83A5D6F1C0B94E27A1D8C536 /* InternetLinkView.swift */; };
+		9E1A5C37B4D82F60A3C71D95 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = 2C8D4F6A1B93E75D0A6C8E21 /* WebRTC */; };
+		4A7F2E9C6B1D8035E2F4A6C8 /* WebRTC in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 2C8D4F6A1B93E75D0A6C8E21 /* WebRTC */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		D3B6081E5F4A29C7B0E3D1F6 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				4A7F2E9C6B1D8035E2F4A6C8 /* WebRTC in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		1730810B724F663A5C62119E /* MeshChat.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MeshChat.entitlements; sourceTree = "<group>"; };
@@ -33,6 +51,8 @@
 		4F86F56488FC84D5A5F4DDF3 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		30C5B07E106DD801927FC60A /* DiscoveryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoveryView.swift; sourceTree = "<group>"; };
 		F4C72C76718D21EEF4CFC0AA /* CryptoIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CryptoIdentity.swift; sourceTree = "<group>"; };
+		B58F3D1A7E2C64095D8B1F72 /* RTCTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RTCTransport.swift; sourceTree = "<group>"; };
+		83A5D6F1C0B94E27A1D8C536 /* InternetLinkView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InternetLinkView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -40,6 +60,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				9E1A5C37B4D82F60A3C71D95 /* WebRTC in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -66,6 +87,8 @@
 				F9CDDFF31C81E3ADD5001473 /* ProfileView.swift */,
 				30C5B07E106DD801927FC60A /* DiscoveryView.swift */,
 				F4C72C76718D21EEF4CFC0AA /* CryptoIdentity.swift */,
+				B58F3D1A7E2C64095D8B1F72 /* RTCTransport.swift */,
+				83A5D6F1C0B94E27A1D8C536 /* InternetLinkView.swift */,
 				4F86F56488FC84D5A5F4DDF3 /* Assets.xcassets */,
 				D5E6C52DEE5CC019C248F31B /* Info.plist */,
 				1730810B724F663A5C62119E /* MeshChat.entitlements */,
@@ -91,12 +114,16 @@
 				4FBA6943642B1D937D40E044 /* Sources */,
 				9A5698EA343592952595FBA5 /* Frameworks */,
 				C49A0FD0824B52103D32DB41 /* Resources */,
+				D3B6081E5F4A29C7B0E3D1F6 /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 			);
 			name = MeshChat;
+			packageProductDependencies = (
+				2C8D4F6A1B93E75D0A6C8E21 /* WebRTC */,
+			);
 			productName = MeshChat;
 			productReference = 689CA7E77F2E6B91AE38D1F9 /* MeshChat.app */;
 			productType = "com.apple.product-type.application";
@@ -128,6 +155,9 @@
 			productRefGroup = 5480A95C70D8BD8E78D4A6A8 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
+			packageReferences = (
+				7B3E91A4C2D05F68E1A97B34 /* XCRemoteSwiftPackageReference "WebRTC" */,
+			);
 			targets = (
 				3FF6E1C0EECAEF038DF09FC1 /* MeshChat */,
 			);
@@ -159,6 +189,8 @@
 				A419C8FA113F575547BC954A /* ProfileView.swift in Sources */,
 				0478613A7B0BC6EFFE8162D0 /* DiscoveryView.swift in Sources */,
 				AFCA054E4E296D911386203C /* CryptoIdentity.swift in Sources */,
+				61C0E8A3D5B7294F8A1E6C03 /* RTCTransport.swift in Sources */,
+				0E94B7C2A6D18F53C7A02E49 /* InternetLinkView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -203,6 +235,10 @@
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
+				);
+				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
@@ -263,6 +299,10 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.app.test;
@@ -299,6 +339,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		7B3E91A4C2D05F68E1A97B34 /* XCRemoteSwiftPackageReference "WebRTC" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/stasel/WebRTC";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 155.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		2C8D4F6A1B93E75D0A6C8E21 /* WebRTC */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7B3E91A4C2D05F68E1A97B34 /* XCRemoteSwiftPackageReference "WebRTC" */;
+			productName = WebRTC;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = E68D73F363078C93241450BB /* Project object */;
 }

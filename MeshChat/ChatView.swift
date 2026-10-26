@@ -179,7 +179,12 @@ struct ChatView: View {
     private var composer: some View {
         VStack(alignment: .leading, spacing: 4) {
             routeIndicator
-            if peer.isRelayed {
+            if livePeer.internetOnly {
+                Text("\(peer.mcPeerID.displayName) is connected over the internet — text and stickers work, but files/photos need a nearby (Wi-Fi/Bluetooth) connection.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+            } else if peer.isRelayed {
                 Text("\(peer.mcPeerID.displayName) is reachable via relay — text works, but files/photos need a direct connection.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -213,15 +218,29 @@ struct ChatView: View {
         .padding(.horizontal, 8)
     }
 
+    /// The peer's current state (ChatView is handed a snapshot when the chat
+    /// opens, which doesn't reflect later link changes).
+    private var livePeer: DiscoveredPeer {
+        mesh.discoveredPeers[peer.id] ?? peer
+    }
+
+    /// Messages to this peer are going out over their WebRTC link.
+    private var routeIsInternet: Bool {
+        mesh.internetAvailable && mesh.internetLinkedPeerIDs.contains(peer.id)
+    }
+
     private var routeHopCount: Int? {
         mesh.hopDistance(to: peer.id)
     }
 
     private var routeIsDirect: Bool {
-        (routeHopCount ?? .max) <= 1
+        routeIsInternet || (routeHopCount ?? .max) <= 1
     }
 
     private var routeLabel: String {
+        if routeIsInternet {
+            return "Internet · peer-to-peer"
+        }
         switch routeHopCount {
         case nil:
             return peer.state == .connecting ? "Connecting…" : "Route unknown"
@@ -243,8 +262,8 @@ struct ChatView: View {
             }
             .frame(width: composerTapTarget, height: composerTapTarget)
             .contentShape(Rectangle())
-            .disabled(peer.isRelayed)
-            .opacity(peer.isRelayed ? 0.4 : 1)
+            .disabled(peer.isRelayed || livePeer.internetOnly)
+            .opacity(peer.isRelayed || livePeer.internetOnly ? 0.4 : 1)
 
             TextField("Message", text: $draft, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
@@ -306,6 +325,10 @@ struct ChatView: View {
     }
 
     private func sendFile(url: URL, name: String) {
+        // Files need a real MultipeerConnectivity session — not available
+        // for relay-only or internet-only peers (also guards the macOS
+        // drag-and-drop path, which bypasses the disabled attach button).
+        guard !peer.isRelayed, !livePeer.internetOnly else { return }
         mesh.sendResource(at: url, named: name, toPeer: peer.mcPeerID)
     }
 

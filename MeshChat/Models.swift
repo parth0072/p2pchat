@@ -74,6 +74,11 @@ struct MeshEnvelope: Codable {
     enum Kind: String, Codable {
         case chatMessage
         case control
+        /// WebRTC offer/answer exchanged over the nearby mesh (encrypted
+        /// end-to-end, like chat messages) so two devices that meet in
+        /// person can later chat peer-to-peer over the internet with no
+        /// signaling server.
+        case signaling
     }
 
     /// Unique per envelope (preserved unchanged across every hop it takes).
@@ -171,6 +176,13 @@ struct DiscoveredPeer: Identifiable, Hashable {
     /// them via flood relay; direct actions (invite, file transfer) can't.
     var isRelayed: Bool
     var lastSeen: Date
+    /// A WebRTC peer-to-peer link over the internet is currently open with
+    /// this peer (messages prefer it over the nearby mesh while internet is
+    /// available).
+    var viaInternet: Bool = false
+    /// Reachable *only* over that internet link — no mesh session. Direct
+    /// actions that need MultipeerConnectivity (file transfer) don't work.
+    var internetOnly: Bool = false
 
     static func stableID(for mcPeerID: MCPeerID) -> String {
         mcPeerID.displayName

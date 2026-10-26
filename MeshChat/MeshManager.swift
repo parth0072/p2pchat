@@ -4,6 +4,7 @@ import Combine
 import UserNotifications
 import os
 import CryptoKit
+import Network
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -95,6 +96,26 @@ final class MeshManager: NSObject, ObservableObject {
     /// topology gossip for peers only ever known via relay. Required before
     /// we can encrypt anything to (or decrypt anything from) that peer.
     private var peerPublicKeys: [String: Curve25519.KeyAgreement.PublicKey] = [:]
+
+    // MARK: Internet (WebRTC) transport
+
+    /// Whether the device currently has a usable network path. While true,
+    /// messages to a peer with an open WebRTC link go over that link
+    /// (peer-to-peer across the internet); otherwise — or if the link
+    /// can't carry the message — they use the nearby mesh as before.
+    @Published private(set) var internetAvailable = false
+
+    /// Peers with an open WebRTC link right now.
+    @Published private(set) var internetLinkedPeerIDs: Set<String> = []
+
+    private let webrtc = WebRTCManager()
+    private var pathMonitor: NWPathMonitor?
+    private var internetNegotiationCooldown: [String: Date] = [:]
+    private var internetRemoteNames: [String: String] = [:]
+    /// Peer-list entries created purely because of an internet link (their
+    /// MCPeerID is a placeholder, never part of a real MCSession). Cleared
+    /// once the mesh discovers/connects that peer for real.
+    private var internetCreatedPeerIDs: Set<String> = []
 
     /// Records a peer's public key, and — if it's *different* from
     /// whatever we already had cached for them (e.g. they reinstalled and
@@ -229,6 +250,7 @@ final class MeshManager: NSObject, ObservableObject {
         startReconnectTimer()
         startExpiryTimer()
         startTopologyTimer()
+        startInternetMonitoring()
         requestNotificationAuthorizationIfNeeded()
     }
 
@@ -401,7 +423,290 @@ final class MeshManager: NSObject, ObservableObject {
         trustStore.untrust(peerID: peer.id)
         discoveredPeers[peer.id]?.isTrusted = false
         resetReconnectBackoff(for: peer.id)
+        // Forgetting also ends any internet link right now (unlike a mesh
+        // session, a single WebRTC link can be dropped individually).
+        webrtc.close(peer: peer.id)
         log(.trust, "Forgot \(peer.mcPeerID.displayName) — won't auto-connect next time")
+    }
+
+    // MARK: Internet (WebRTC) links
+
+    /// Internet-first, mesh-fallback routing in one place:
+    ///  - sendChatMessage prefers an open WebRTC link whenever
+    ///    `internetAvailable`, and drops to the nearby mesh if there's no
+    ///    link, no internet, or the link can't take the message.
+    ///  - Links are set up with no server: either automatically by
+    ///    exchanging the WebRTC offer/answer over the mesh while two devices
+    ///    are nearby (negotiateInternetLinks), or manually via QR code /
+    ///    pasted text (createInternetInvite / processInternetCode).
+    ///  - Nothing is stored: a link and its messages exist only in memory
+    ///    for as long as the connection is up.
+    private func startInternetMonitoring() {
+        webrtc.onLinkChange = { [weak self] remote, isUp in
+            self?.internetLinkChanged(remote, isUp: isUp)
+        }
+        webrtc.onData = { [weak self] data, remote in
+            self?.handleInternetData(data, from: remote)
+        }
+
+        guard pathMonitor == nil else { return }
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            let online = path.status == .satisfied
+            Task { @MainActor [weak self] in
+                self?.internetPathChanged(online: online)
+            }
+        }
+        monitor.start(queue: DispatchQueue(label: "app-chat.path-monitor"))
+        pathMonitor = monitor
+    }
+
+    private func internetPathChanged(online: Bool) {
+        guard online != internetAvailable else { return }
+        internetAvailable = online
+        if online {
+            log(.route, "Internet available — peer-to-peer internet links preferred, mesh is the fallback")
+            negotiateInternetLinks()
+        } else {
+            log(.route, "Internet unavailable — using the nearby mesh only")
+        }
+    }
+
+    private func internetLinkChanged(_ remote: LinkRemote, isUp: Bool) {
+        if isUp {
+            learnPublicKey(remote.publicKey, for: remote.id)
+            internetLinkedPeerIDs.insert(remote.id)
+            internetRemoteNames[remote.id] = remote.name
+            if var existing = discoveredPeers[remote.id] {
+                existing.viaInternet = true
+                if existing.state == .notConnected {
+                    existing.state = .connected
+                    existing.internetOnly = true
+                }
+                existing.lastSeen = Date()
+                discoveredPeers[remote.id] = existing
+            } else {
+                internetCreatedPeerIDs.insert(remote.id)
+                discoveredPeers[remote.id] = DiscoveredPeer(
+                    id: remote.id,
+                    mcPeerID: MCPeerID(displayName: remote.name),
+                    groupName: currentGroup.name,
+                    state: .connected,
+                    isTrusted: trustStore.isTrusted(remote.id),
+                    isRelayed: false,
+                    lastSeen: Date(),
+                    viaInternet: true,
+                    internetOnly: true
+                )
+            }
+            log(.connect, "\(remote.name) → connected (internet, peer-to-peer)")
+        } else {
+            internetLinkedPeerIDs.remove(remote.id)
+            internetRemoteNames[remote.id] = nil
+            internetNegotiationCooldown[remote.id] = nil
+            if internetCreatedPeerIDs.contains(remote.id) {
+                internetCreatedPeerIDs.remove(remote.id)
+                discoveredPeers.removeValue(forKey: remote.id)
+            } else if var existing = discoveredPeers[remote.id] {
+                existing.viaInternet = false
+                if existing.internetOnly {
+                    existing.internetOnly = false
+                    existing.state = .notConnected
+                }
+                discoveredPeers[remote.id] = existing
+            }
+            log(.connect, "\(remote.name) → internet link closed")
+        }
+    }
+
+    /// Re-creates peer-list entries for open internet links after the peer
+    /// list was cleared (group switch).
+    private func restoreInternetPeers() {
+        for id in internetLinkedPeerIDs {
+            let name = internetRemoteNames[id] ?? id
+            internetCreatedPeerIDs.insert(id)
+            discoveredPeers[id] = DiscoveredPeer(
+                id: id,
+                mcPeerID: MCPeerID(displayName: name),
+                groupName: currentGroup.name,
+                state: .connected,
+                isTrusted: trustStore.isTrusted(id),
+                isRelayed: false,
+                lastSeen: Date(),
+                viaInternet: true,
+                internetOnly: true
+            )
+        }
+    }
+
+    /// For each peer reachable on the mesh that I don't have an internet
+    /// link with yet, offer one — the offer travels through the mesh,
+    /// end-to-end encrypted. Only the lexicographically-lower ID offers, so
+    /// both sides never offer at once.
+    private func negotiateInternetLinks() {
+        guard internetAvailable else { return }
+        let myID = DiscoveredPeer.stableID(for: localPeerID)
+        let now = Date()
+        for (id, peer) in discoveredPeers {
+            guard peer.state == .connected, !peer.internetOnly,
+                  !internetLinkedPeerIDs.contains(id),
+                  myID < id,
+                  peerPublicKeys[id] != nil else { continue }
+            if let until = internetNegotiationCooldown[id], until > now { continue }
+            internetNegotiationCooldown[id] = now.addingTimeInterval(60)
+            Task {
+                await offerInternetLink(to: id)
+            }
+        }
+    }
+
+    private func offerInternetLink(to id: String) async {
+        let myID = DiscoveredPeer.stableID(for: localPeerID)
+        guard let offer = await webrtc.makeOffer(myID: myID, myName: localDisplayName, myKey: encryption.publicKeyBase64) else {
+            log(.error, "Couldn't create an internet link offer for \(displayName(for: id))")
+            return
+        }
+        sendSignal(offer, to: id)
+        log(.route, "Offered an internet link to \(displayName(for: id)) via the mesh")
+    }
+
+    /// Sends a WebRTC offer/answer to `peerID` through the mesh, sealed with
+    /// the same end-to-end encryption as chat messages so relay hops can't
+    /// read the connection details (which include network addresses).
+    private func sendSignal(_ signal: LinkSignal, to peerID: String) {
+        let myID = DiscoveredPeer.stableID(for: localPeerID)
+        guard let key = peerPublicKeys[peerID],
+              let plain = try? JSONEncoder().encode(signal),
+              let sealed = encryption.encrypt(plain, for: peerID, peerPublicKey: key, myID: myID) else {
+            log(.error, "Couldn't encrypt an internet link signal for \(displayName(for: peerID))")
+            return
+        }
+        let envelope = MeshEnvelope(
+            id: UUID(),
+            kind: .signaling,
+            originPeerID: myID,
+            targetPeerID: peerID,
+            hopCount: 0,
+            payload: sealed
+        )
+        let target = discoveredPeers[peerID]?.mcPeerID ?? MCPeerID(displayName: displayName(for: peerID))
+        sendDirect(envelope, to: target, deliveryMode: .reliable)
+    }
+
+    private func handleSignalingEnvelope(_ envelope: MeshEnvelope) {
+        let myID = DiscoveredPeer.stableID(for: localPeerID)
+        guard let key = peerPublicKeys[envelope.originPeerID],
+              let plain = encryption.decrypt(envelope.payload, from: envelope.originPeerID, peerPublicKey: key, myID: myID),
+              let signal = try? JSONDecoder().decode(LinkSignal.self, from: plain),
+              signal.fromID == envelope.originPeerID else {
+            log(.error, "Dropped an unreadable internet link signal from \(displayName(for: envelope.originPeerID))")
+            return
+        }
+
+        switch signal.kind {
+        case .offer:
+            guard internetAvailable else {
+                log(.route, "Ignored internet link offer from \(signal.fromName): no internet here")
+                return
+            }
+            Task {
+                guard let answer = await webrtc.makeAnswer(
+                    to: signal,
+                    myID: myID,
+                    myName: localDisplayName,
+                    myKey: encryption.publicKeyBase64
+                ) else {
+                    log(.error, "Couldn't answer internet link offer from \(signal.fromName)")
+                    return
+                }
+                sendSignal(answer, to: signal.fromID)
+            }
+        case .answer:
+            Task {
+                let applied = await webrtc.complete(with: signal)
+                if !applied {
+                    log(.error, "Internet link answer from \(signal.fromName) didn't match an open offer")
+                }
+            }
+        }
+    }
+
+    private func handleInternetData(_ data: Data, from remote: LinkRemote) {
+        guard let envelope = try? JSONDecoder().decode(MeshEnvelope.self, from: data) else { return }
+        let myID = DiscoveredPeer.stableID(for: localPeerID)
+        // A direct link only ever carries messages addressed to me from the
+        // peer on the other end of it.
+        guard envelope.kind == .chatMessage,
+              envelope.targetPeerID == myID,
+              envelope.originPeerID == remote.id else { return }
+        guard markSeenIfNew(envelope.id) else { return }
+        receiveChat(envelope, viaInternet: true)
+    }
+
+    // MARK: Manual (QR / pasted text) internet links
+
+    enum InternetCodeResult {
+        /// I accepted an invite; this reply code must go back to the inviter.
+        case reply(String)
+        /// The inviter applied my reply; the link is now connecting.
+        case linked(String)
+        case failure(String)
+    }
+
+    /// Creates an invite code (a WebRTC offer) to show as a QR code or share
+    /// as text. Nothing leaves the device until the other person receives it.
+    func createInternetInvite() async -> String? {
+        let myID = DiscoveredPeer.stableID(for: localPeerID)
+        guard let offer = await webrtc.makeOffer(myID: myID, myName: localDisplayName, myKey: encryption.publicKeyBase64) else {
+            log(.error, "Couldn't create an internet invite")
+            return nil
+        }
+        log(.route, "Created an internet invite (waiting for a reply code)")
+        return LinkSignalCodec.encode(offer)
+    }
+
+    /// Handles a code pasted/scanned from the other person: an invite gets
+    /// answered (the reply code goes back to them), a reply completes an
+    /// invite I created earlier.
+    func processInternetCode(_ text: String) async -> InternetCodeResult {
+        guard let signal = LinkSignalCodec.decode(text) else {
+            return .failure("That doesn't look like a MeshChat code.")
+        }
+        let myID = DiscoveredPeer.stableID(for: localPeerID)
+        guard signal.fromID != myID else {
+            return .failure("That's your own code — send it to the other person.")
+        }
+        guard let incomingKey = EncryptionManager.decodePublicKey(signal.publicKey) else {
+            return .failure("That code has an invalid encryption key.")
+        }
+        // Never let a pasted code silently swap the key of someone whose
+        // identity key is already known.
+        if let known = peerPublicKeys[signal.fromID], known.rawRepresentation != incomingKey.rawRepresentation {
+            return .failure("The encryption key in this code doesn't match the one already known for \(signal.fromName). Refusing it.")
+        }
+
+        switch signal.kind {
+        case .offer:
+            learnPublicKey(signal.publicKey, for: signal.fromID)
+            guard let answer = await webrtc.makeAnswer(
+                to: signal,
+                myID: myID,
+                myName: localDisplayName,
+                myKey: encryption.publicKeyBase64
+            ), let code = LinkSignalCodec.encode(answer) else {
+                return .failure("Couldn't create a reply. Try again.")
+            }
+            log(.route, "Accepted an internet invite from \(signal.fromName) (reply code ready)")
+            return .reply(code)
+        case .answer:
+            learnPublicKey(signal.publicKey, for: signal.fromID)
+            let applied = await webrtc.complete(with: signal)
+            guard applied else {
+                return .failure("No open invite matches this reply — it may have expired. Create a new invite.")
+            }
+            log(.route, "Applied reply from \(signal.fromName) — connecting")
+            return .linked(signal.fromName)
+        }
     }
 
     // MARK: Invitations
@@ -502,9 +807,23 @@ final class MeshManager: NSObject, ObservableObject {
             hopCount: 0,
             payload: payload
         )
+        // Internet first: if there's a network path and an open WebRTC link
+        // to this peer, send peer-to-peer over it. Anything that stops that
+        // (no internet, no link, link can't take it) falls through to the
+        // nearby mesh below, exactly as before.
+        if internetAvailable,
+           internetLinkedPeerIDs.contains(peer.id),
+           let wire = try? JSONEncoder().encode(envelope),
+           webrtc.send(wire, to: peer.id) {
+            if message.type != .typing {
+                log(.route, "Sending message to \(peer.mcPeerID.displayName): internet (WebRTC peer-to-peer)")
+            }
+            return
+        }
+
         // Typing indicators fire on every keystroke — logging those would
-        // drown out everything else in the Debug view, so only real
-        // messages/stickers/files get a route entry.
+        // drown out everything else, so only real messages/stickers/files
+        // get a route entry.
         if message.type != .typing {
             log(.route, routeDescription(sending: "message", to: peer.mcPeerID))
         }
@@ -710,6 +1029,10 @@ final class MeshManager: NSObject, ObservableObject {
         topologyLastSeen.removeAll()
         reconnectAttempts.removeAll()
         nextReconnectAttempt.removeAll()
+        internetCreatedPeerIDs.removeAll()
+        // Internet links aren't tied to a group — keep them up and put
+        // their peers back in the (just-cleared) peer list.
+        restoreInternetPeers()
 
         rebuildNetworkStack()
         start()
@@ -738,6 +1061,15 @@ final class MeshManager: NSObject, ObservableObject {
         topologyLastSeen.removeAll()
         reconnectAttempts.removeAll()
         nextReconnectAttempt.removeAll()
+
+        // My stable ID is my display name, so peers that linked to the old
+        // name no longer match — drop every internet link and let them be
+        // re-established under the new identity.
+        webrtc.closeAll()
+        internetLinkedPeerIDs.removeAll()
+        internetRemoteNames.removeAll()
+        internetCreatedPeerIDs.removeAll()
+        internetNegotiationCooldown.removeAll()
 
         rebuildNetworkStack()
         start()
@@ -915,6 +1247,17 @@ extension MeshManager: MCSessionDelegate {
             peer.isRelayed = false
             peer.state = PeerConnectionState(from: state)
             peer.lastSeen = Date()
+            // The mesh now owns this peer's entry (real MCPeerID) — and if
+            // the mesh link drops while a WebRTC link to them is still up,
+            // keep showing them as reachable (over the internet).
+            internetCreatedPeerIDs.remove(id)
+            peer.viaInternet = internetLinkedPeerIDs.contains(id)
+            if state == .connected {
+                peer.internetOnly = false
+            } else if state == .notConnected, peer.viaInternet {
+                peer.state = .connected
+                peer.internetOnly = true
+            }
             discoveredPeers[id] = peer
 
             if state == .connected {
@@ -1064,32 +1407,16 @@ extension MeshManager: MCSessionDelegate {
                 floodForward(envelope, excluding: peerID)
                 return
             }
-
-            guard let senderKey = peerPublicKeys[envelope.originPeerID] else {
-                log(.error, "Can't decrypt message from \(displayName(for: envelope.originPeerID)): no key known yet")
+            receiveChat(envelope, viaInternet: false)
+        case .signaling:
+            // Same rule as chat messages: only the addressee ever opens it,
+            // everyone else just passes the sealed envelope along.
+            let myID = DiscoveredPeer.stableID(for: localPeerID)
+            guard envelope.targetPeerID == myID else {
+                floodForward(envelope, excluding: peerID)
                 return
             }
-            guard let plaintext = encryption.decrypt(envelope.payload, from: envelope.originPeerID, peerPublicKey: senderKey, myID: myID) else {
-                log(.error, "Failed to decrypt message from \(displayName(for: envelope.originPeerID)) — dropped")
-                return
-            }
-            guard let message = try? JSONDecoder().decode(ChatMessage.self, from: plaintext) else { return }
-
-            if message.type == .typing {
-                if message.content == "1" {
-                    typingPeerIDs.insert(message.senderID)
-                } else {
-                    typingPeerIDs.remove(message.senderID)
-                }
-                return
-            }
-
-            if !messages.contains(where: { $0.id == message.id }) {
-                appendLocal(message)
-                postLocalNotification(for: message)
-                let route = envelope.hopCount == 0 ? "direct" : "via relay, \(envelope.hopCount) hop(s)"
-                log(.route, "Received from \(message.senderName): \(route)")
-            }
+            handleSignalingEnvelope(envelope)
         case .control:
             guard let control = try? JSONDecoder().decode(ControlMessage.self, from: envelope.payload) else { return }
             handleControl(control, from: peerID)
@@ -1098,6 +1425,45 @@ extension MeshManager: MCSessionDelegate {
             if envelope.targetPeerID == nil {
                 floodForward(envelope, excluding: peerID)
             }
+        }
+    }
+
+    /// Decrypts and delivers a chat envelope addressed to me — shared by the
+    /// mesh path and the internet (WebRTC) path so both end up in the same
+    /// place with the same end-to-end encryption check.
+    private func receiveChat(_ envelope: MeshEnvelope, viaInternet: Bool) {
+        let myID = DiscoveredPeer.stableID(for: localPeerID)
+        guard let senderKey = peerPublicKeys[envelope.originPeerID] else {
+            log(.error, "Can't decrypt message from \(displayName(for: envelope.originPeerID)): no key known yet")
+            return
+        }
+        guard let plaintext = encryption.decrypt(envelope.payload, from: envelope.originPeerID, peerPublicKey: senderKey, myID: myID) else {
+            log(.error, "Failed to decrypt message from \(displayName(for: envelope.originPeerID)) — dropped")
+            return
+        }
+        guard let message = try? JSONDecoder().decode(ChatMessage.self, from: plaintext) else { return }
+
+        if message.type == .typing {
+            if message.content == "1" {
+                typingPeerIDs.insert(message.senderID)
+            } else {
+                typingPeerIDs.remove(message.senderID)
+            }
+            return
+        }
+
+        if !messages.contains(where: { $0.id == message.id }) {
+            appendLocal(message)
+            postLocalNotification(for: message)
+            let route: String
+            if viaInternet {
+                route = "internet, peer-to-peer"
+            } else if envelope.hopCount == 0 {
+                route = "direct"
+            } else {
+                route = "via relay, \(envelope.hopCount) hop(s)"
+            }
+            log(.route, "Received from \(message.senderName): \(route)")
         }
     }
 
@@ -1220,6 +1586,10 @@ extension MeshManager: MCSessionDelegate {
         topologyNames[myID] = localDisplayName
         topologyLastSeen[myID] = Date()
         syncRelayReachablePeers()
+        // Piggybacks on the same periodic/event-driven tick: whenever the
+        // mesh topology changes (or every few seconds), see whether any
+        // reachable peer still needs an internet link offered.
+        negotiateInternetLinks()
 
         guard !session.connectedPeers.isEmpty else { return }
         let control = ControlMessage(
@@ -1326,7 +1696,7 @@ extension MeshManager: MCSessionDelegate {
             )
         }
 
-        for (id, peer) in discoveredPeers where peer.isRelayed {
+        for (id, peer) in discoveredPeers where peer.isRelayed && !internetLinkedPeerIDs.contains(id) {
             let lastSeen = topologyLastSeen[id] ?? peer.lastSeen
             if now.timeIntervalSince(lastSeen) > relayPeerStaleAfter {
                 log(.discovery, "\(peer.mcPeerID.displayName) dropped from mesh (no gossip for \(Int(relayPeerStaleAfter))s)")
@@ -1405,10 +1775,14 @@ extension MeshManager: MCNearbyServiceBrowserDelegate {
             // the same as being *connected* though, so drop back to
             // .notConnected and let the normal trust/invite flow below (or
             // a manual tap) establish the real session.
-            if wasRelayOnly {
+            let wasInternetPlaceholder = internetCreatedPeerIDs.contains(id)
+            if wasRelayOnly || wasInternetPlaceholder {
                 peer.mcPeerID = peerID
                 peer.isRelayed = false
-                peer.state = .notConnected
+                // Still reachable over an open internet link even though
+                // the mesh session itself isn't up yet.
+                peer.state = peer.viaInternet ? .connected : .notConnected
+                internetCreatedPeerIDs.remove(id)
             }
             peer.groupName = groupName
             peer.lastSeen = Date()

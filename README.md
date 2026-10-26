@@ -4,7 +4,9 @@ Serverless, login-free P2P chat for iOS and macOS. No server, no account —
 devices discover and message each other directly over Wi-Fi and Bluetooth
 using Apple's MultipeerConnectivity, relaying through each other
 automatically so a group's reach extends beyond any single device's range.
-Messages are end-to-end encrypted.
+Messages are end-to-end encrypted. When the internet is available, devices
+can also chat directly over WebRTC (still no server, nothing stored), with
+the nearby mesh as the automatic fallback.
 
 ![Build MeshChat](https://github.com/parth0072/p2pchat/actions/workflows/build.yml/badge.svg)
 
@@ -22,11 +24,11 @@ Already have a build artifact downloaded from a specific [Actions run](https://g
 
 ## Build from source (iOS or macOS)
 
-1. Open `MeshChat.xcodeproj` in Xcode.
+1. Open `MeshChat.xcodeproj` in Xcode (it fetches the WebRTC Swift package on first open, so the first build needs internet and takes a while).
 2. Set your own Team under Signing & Capabilities (only required to run on a physical device).
 3. Pick a run destination and hit Run.
 
-Two devices just need to be within Wi-Fi/Bluetooth range of each other — not on the same network, no prior pairing required. The iOS Simulator can't do peer discovery, so at least one side needs real hardware.
+Two devices just need to be within Wi-Fi/Bluetooth range of each other — not on the same network, no prior pairing required. To chat over the internet instead, tap the globe button for an invite/reply code exchange, or meet once nearby and the devices link up automatically. The iOS Simulator can't do peer discovery, so at least one side needs real hardware.
 
 ## Project layout
 
