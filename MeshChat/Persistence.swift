@@ -1,11 +1,58 @@
 import Foundation
 import SwiftData
+import CryptoKit
 import os
 #if canImport(UIKit)
 import UIKit
 #endif
 
 private let storageLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.meshchat.app", category: "storage")
+
+// MARK: - Encryption at rest
+
+/// Encrypts the sensitive parts of stored chat history (message text, sender
+/// name, attachment name and path) with AES-GCM under a random 256-bit key
+/// created on first use and kept in the Keychain — separate from the
+/// identity key used for end-to-end message encryption in transit. Anyone
+/// copying the database file off the device sees only ciphertext. IDs,
+/// timestamps and group names stay readable because queries and expiry need
+/// them.
+///
+/// Rows written before this existed are plain text; they're recognized by
+/// the missing "enc1:" prefix and read as-is (they expire within 24h anyway).
+enum LocalCrypto {
+    private static let service = "app-chat.storage"
+    private static let account = "history-key"
+    private static let prefix = "enc1:"
+
+    private static let key: SymmetricKey = {
+        if let data = KeychainStore.load(service: service, account: account), data.count == 32 {
+            return SymmetricKey(data: data)
+        }
+        let fresh = SymmetricKey(size: .bits256)
+        fresh.withUnsafeBytes { KeychainStore.save(Data($0), service: service, account: account) }
+        return fresh
+    }()
+
+    static func seal(_ text: String) -> String {
+        guard let sealed = try? AES.GCM.seal(Data(text.utf8), using: key),
+              let combined = sealed.combined else {
+            storageLogger.error("Couldn't encrypt a stored value")
+            return text
+        }
+        return prefix + combined.base64EncodedString()
+    }
+
+    static func open(_ stored: String) -> String {
+        guard stored.hasPrefix(prefix) else { return stored }   // legacy plain-text row
+        guard let data = Data(base64Encoded: String(stored.dropFirst(prefix.count))),
+              let box = try? AES.GCM.SealedBox(combined: data),
+              let plain = try? AES.GCM.open(box, using: key) else {
+            return "[Unreadable — encryption key unavailable]"
+        }
+        return String(decoding: plain, as: UTF8.self)
+    }
+}
 
 // MARK: - SwiftData model
 
@@ -26,30 +73,30 @@ final class PersistedMessage {
     init(from message: ChatMessage) {
         id = message.id
         senderID = message.senderID
-        senderName = message.senderName
+        senderName = LocalCrypto.seal(message.senderName)
         timestamp = message.timestamp
         typeRaw = message.type.rawValue
-        content = message.content
+        content = LocalCrypto.seal(message.content)
         groupID = message.groupID
         recipientPeerID = message.recipientPeerID
-        fileName = message.fileName
+        fileName = message.fileName.map(LocalCrypto.seal)
         fileSize = message.fileSize
-        localURLString = message.localURL?.absoluteString
+        localURLString = message.localURL.map { LocalCrypto.seal($0.absoluteString) }
     }
 
     var asChatMessage: ChatMessage {
         ChatMessage(
             id: id,
             senderID: senderID,
-            senderName: senderName,
+            senderName: LocalCrypto.open(senderName),
             timestamp: timestamp,
             type: MessageType(rawValue: typeRaw) ?? .text,
-            content: content,
+            content: LocalCrypto.open(content),
             groupID: groupID,
             recipientPeerID: recipientPeerID,
-            fileName: fileName,
+            fileName: fileName.map(LocalCrypto.open),
             fileSize: fileSize,
-            localURL: localURLString.flatMap(URL.init(string:))
+            localURL: localURLString.flatMap { URL(string: LocalCrypto.open($0)) }
         )
     }
 }
