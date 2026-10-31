@@ -9,6 +9,12 @@ import Network
 import UIKit
 #endif
 
+/// UserDefaults keys for the switches on the Privacy & security screen.
+private enum PrivacyKey {
+    static let internetChat = "app-chat.internetEnabled"
+    static let relayForOthers = "app-chat.relayForOthers"
+}
+
 /// Wraps MCSession + advertiser + browser into a mesh-topology manager.
 /// Every peer advertises and browses simultaneously, and every peer floods
 /// envelopes on toward peers it isn't directly connected to (see
@@ -111,6 +117,37 @@ final class MeshManager: NSObject, ObservableObject {
     /// What the most recent link attempt is doing ("Checking network
     /// routes…", "No direct route…"), shown in the Internet Chat sheet.
     @Published private(set) var internetLinkProgress: String?
+
+    // MARK: Privacy controls (Privacy & security screen)
+
+    /// User switch for all internet chat. Off means nearby-only: no internet
+    /// links are offered, accepted, kept or used.
+    @Published var internetChatEnabled: Bool = (UserDefaults.standard.object(forKey: PrivacyKey.internetChat) as? Bool) ?? true {
+        didSet {
+            guard oldValue != internetChatEnabled else { return }
+            UserDefaults.standard.set(internetChatEnabled, forKey: PrivacyKey.internetChat)
+            if internetChatEnabled {
+                negotiateInternetLinks()
+            } else {
+                dropAllInternetLinks()
+            }
+        }
+    }
+
+    /// Whether this device passes other people's (still sealed) messages
+    /// along. Off keeps this device out of the middle of the mesh; it can
+    /// still send and receive its own chats.
+    @Published var relayForOthers: Bool = (UserDefaults.standard.object(forKey: PrivacyKey.relayForOthers) as? Bool) ?? true {
+        didSet {
+            guard oldValue != relayForOthers else { return }
+            UserDefaults.standard.set(relayForOthers, forKey: PrivacyKey.relayForOthers)
+        }
+    }
+
+    /// A network path exists *and* the user allows internet chat.
+    var internetUsable: Bool {
+        internetAvailable && internetChatEnabled
+    }
 
     private let webrtc = WebRTCManager()
     private var pathMonitor: NWPathMonitor?
@@ -528,6 +565,60 @@ final class MeshManager: NSObject, ObservableObject {
         }
     }
 
+    /// Display name of someone with an internet link (falls back to their ID).
+    func internetRemoteName(for peerID: String) -> String {
+        internetRemoteNames[peerID] ?? peerID
+    }
+
+    /// Closes every internet link and removes the peers that existed only
+    /// because of one. Used when internet chat is switched off.
+    private func dropAllInternetLinks() {
+        let ids = Array(internetLinkedPeerIDs)
+        webrtc.closeAll()
+        for id in ids {
+            internetLinkedPeerIDs.remove(id)
+            internetNegotiationCooldown[id] = nil
+            if internetCreatedPeerIDs.contains(id) {
+                internetCreatedPeerIDs.remove(id)
+                discoveredPeers.removeValue(forKey: id)
+            } else if var existing = discoveredPeers[id] {
+                existing.viaInternet = false
+                if existing.internetOnly {
+                    existing.internetOnly = false
+                    existing.state = .notConnected
+                }
+                discoveredPeers[id] = existing
+            }
+        }
+        internetRemoteNames.removeAll()
+        internetLinkProgress = nil
+        log(.route, "Internet chat turned off — all internet links closed")
+    }
+
+    /// Wipes everything MeshChat keeps on this device: chat history (memory
+    /// and disk), received files, trusted devices, the optional relay server
+    /// and every internet link. The caller resets the profile separately
+    /// (see ProfileStore.reset) and re-runs onboarding.
+    func forgetEverything() {
+        messages.removeAll()
+        onMessagesChanged(messages)
+        messageStore?.deleteAll()
+        trustStore.removeAll()
+        for id in Array(discoveredPeers.keys) {
+            discoveredPeers[id]?.isTrusted = false
+        }
+        dropAllInternetLinks()
+        saveRelay(RelaySettings())
+        if let docs = try? FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: false) {
+            try? FileManager.default.removeItem(at: docs.appendingPathComponent("Received", isDirectory: true))
+        }
+        UserDefaults.standard.removeObject(forKey: Self.lastGroupNameKey)
+        internetChatEnabled = true
+        relayForOthers = true
+        switchGroup(to: ChatGroup(name: "General"))
+        log(.trust, "Forgot everything on this device")
+    }
+
     /// Re-creates peer-list entries for open internet links after the peer
     /// list was cleared (group switch).
     private func restoreInternetPeers() {
@@ -553,7 +644,7 @@ final class MeshManager: NSObject, ObservableObject {
     /// end-to-end encrypted. Only the lexicographically-lower ID offers, so
     /// both sides never offer at once.
     private func negotiateInternetLinks() {
-        guard internetAvailable else { return }
+        guard internetUsable else { return }
         let myID = DiscoveredPeer.stableID(for: localPeerID)
         let now = Date()
         for (id, peer) in discoveredPeers {
@@ -614,8 +705,8 @@ final class MeshManager: NSObject, ObservableObject {
 
         switch signal.kind {
         case .offer:
-            guard internetAvailable else {
-                log(.route, "Ignored internet link offer from \(signal.fromName): no internet here")
+            guard internetUsable else {
+                log(.route, "Ignored internet link offer from \(signal.fromName): internet chat unavailable or turned off")
                 return
             }
             Task {
@@ -680,12 +771,19 @@ final class MeshManager: NSObject, ObservableObject {
         case reply(code: String, peerID: String, name: String)
         /// The inviter applied my reply; the link is now connecting.
         case linked(peerID: String, name: String)
+        /// A reply that no open invite matches — the invite expired (or was
+        /// already used, or was never made on this device).
+        case expired
         case failure(String)
     }
+
+    /// How long an invite I created stays open waiting for a reply.
+    static let inviteLifetime: TimeInterval = 10 * 60
 
     /// Creates an invite code (a WebRTC offer) to show as a QR code or share
     /// as text. Nothing leaves the device until the other person receives it.
     func createInternetInvite() async -> String? {
+        guard internetChatEnabled else { return nil }
         let myID = DiscoveredPeer.stableID(for: localPeerID)
         guard let offer = await webrtc.makeOffer(myID: myID, myName: localDisplayName, myKey: encryption.publicKeyBase64) else {
             log(.error, "Couldn't create an internet invite")
@@ -699,6 +797,9 @@ final class MeshManager: NSObject, ObservableObject {
     /// answered (the reply code goes back to them), a reply completes an
     /// invite I created earlier.
     func processInternetCode(_ text: String) async -> InternetCodeResult {
+        guard internetChatEnabled else {
+            return .failure("Internet chat is turned off. Turn it on in Privacy & security.")
+        }
         guard let signal = LinkSignalCodec.decode(text) else {
             return .failure("That doesn't look like a MeshChat code.")
         }
@@ -732,7 +833,7 @@ final class MeshManager: NSObject, ObservableObject {
             learnPublicKey(signal.publicKey, for: signal.fromID)
             let applied = await webrtc.complete(with: signal)
             guard applied else {
-                return .failure("No open invite matches this reply — it may have expired. Create a new invite.")
+                return .expired
             }
             log(.route, "Applied reply from \(signal.fromName) — connecting")
             return .linked(peerID: signal.fromID, name: signal.fromName)
@@ -841,7 +942,7 @@ final class MeshManager: NSObject, ObservableObject {
         // to this peer, send peer-to-peer over it. Anything that stops that
         // (no internet, no link, link can't take it) falls through to the
         // nearby mesh below, exactly as before.
-        if internetAvailable,
+        if internetUsable,
            internetLinkedPeerIDs.contains(peer.id),
            let wire = try? JSONEncoder().encode(envelope),
            webrtc.send(wire, to: peer.id) {
@@ -1523,6 +1624,9 @@ extension MeshManager: MCSessionDelegate {
     /// hopCount hits the cap. seenEnvelopeIDs (checked before handle() is
     /// even called) stops it from looping forever around any cycle.
     private func floodForward(_ envelope: MeshEnvelope, excluding sender: MCPeerID) {
+        // "Relay for others" off: this device stays out of the middle.
+        guard relayForOthers else { return }
+
         // Topology gossip re-floods every ~6s from every peer, hop after hop
         // — logging that would drown out the actual chat routing the Debug
         // view is meant to surface, so only .chatMessage envelopes get a
@@ -1911,6 +2015,11 @@ final class TrustStore {
 
     func untrust(peerID: String) {
         cache[peerID] = nil
+        persist()
+    }
+
+    func removeAll() {
+        cache.removeAll()
         persist()
     }
 

@@ -11,12 +11,14 @@ struct ProfileView: View {
     @ObservedObject var profileStore: ProfileStore
     @ObservedObject var mesh: MeshManager
     @Environment(\.dismiss) private var dismiss
+    @AppStorage(OnboardingFlag.key) private var onboardingDone = true
 
     @State private var name: String
     @State private var photoPickerItem: PhotosPickerItem?
     @State private var showingFileImporter = false
     @State private var pendingAvatarData: Data?
     @State private var removedAvatar = false
+    @State private var showingPrivacy = false
 
     init(profileStore: ProfileStore, mesh: MeshManager) {
         self.profileStore = profileStore
@@ -24,56 +26,71 @@ struct ProfileView: View {
         _name = State(initialValue: profileStore.profile.displayName)
     }
 
+    private var trimmedName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    HStack {
-                        Spacer()
-                        avatarView
-                        Spacer()
+        SheetScaffold(
+            title: "Your profile",
+            trailing: SheetHeader.Trailing(title: "Save", isEnabled: !trimmedName.isEmpty, action: save),
+            onLeading: { dismiss() }
+        ) {
+            ScrollView {
+                VStack(spacing: 18) {
+                    avatarView
+                        .padding(.top, 8)
+
+                    photoButtons
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        SectionCaption("Name")
+                        TextField("Your name", text: $name)
+                            #if os(iOS)
+                            .textInputAutocapitalization(.words)
+                            #endif
+                            .brandField()
+                        Text("Your name is shown to nearby people. Your photo stays on this device only — it isn't sent over the mesh.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 4)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    .padding(.vertical, 8)
-                    .listRowBackground(Color.clear)
-                }
 
-                Section("Name") {
-                    TextField("Your name", text: $name)
-                        #if os(iOS)
-                        .textInputAutocapitalization(.words)
-                        #endif
-                }
-
-                Section("Photo") {
-                    #if os(iOS)
-                    PhotosPicker("Choose Photo", selection: $photoPickerItem, matching: .images)
-                    #else
-                    Button("Choose Photo…") { showingFileImporter = true }
-                    #endif
-                    if hasAvatar {
-                        Button("Remove Photo", role: .destructive) {
-                            pendingAvatarData = nil
-                            removedAvatar = true
+                    Button {
+                        showingPrivacy = true
+                    } label: {
+                        HStack(spacing: 12) {
+                            IconBadge(systemName: "lock.shield")
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Privacy & security")
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.primary)
+                                Text("What's stored, and your controls")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
                         }
+                        .padding(12)
+                        .brandCard()
+                    }
+                    .buttonStyle(.plain)
+
+                    TextLinkButton(title: "Show intro again", tint: .secondary) {
+                        onboardingDone = false
+                        dismiss()
                     }
                 }
-
-                Section {
-                    Text("Your name is shown to nearby peers and attached to every message you send. Your photo stays on this device only — it isn't transferred over the mesh.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 24)
             }
-            .navigationTitle("Your Profile")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save", action: save)
-                        .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-            }
+        }
+        .sheet(isPresented: $showingPrivacy) {
+            PrivacyView(mesh: mesh, profileStore: profileStore)
         }
         .onChange(of: photoPickerItem) {
             guard let item = photoPickerItem else { return }
@@ -92,6 +109,43 @@ struct ProfileView: View {
         }
     }
 
+    private var photoButtons: some View {
+        HStack(spacing: 10) {
+            #if os(iOS)
+            PhotosPicker(selection: $photoPickerItem, matching: .images) {
+                photoButtonLabel("Choose photo", systemImage: "camera")
+            }
+            .buttonStyle(.plain)
+            #else
+            Button {
+                showingFileImporter = true
+            } label: {
+                photoButtonLabel("Choose photo", systemImage: "camera")
+            }
+            .buttonStyle(.plain)
+            #endif
+
+            if hasAvatar {
+                Button {
+                    pendingAvatarData = nil
+                    removedAvatar = true
+                } label: {
+                    photoButtonLabel("Remove photo", systemImage: "trash")
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func photoButtonLabel(_ title: String, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.primary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 11)
+            .brandCard(cornerRadius: 14)
+    }
+
     private var hasAvatar: Bool {
         if removedAvatar { return false }
         return pendingAvatarData != nil || profileStore.profile.avatarFileName != nil
@@ -105,9 +159,7 @@ struct ProfileView: View {
             } else if !removedAvatar, let url = profileStore.avatarURL, let image = platformImage(at: url) {
                 image.resizable().scaledToFill()
             } else {
-                Image(systemName: "person.crop.circle.fill")
-                    .resizable()
-                    .foregroundStyle(.secondary)
+                AvatarView(name: trimmedName.isEmpty ? "?" : trimmedName, size: 96)
             }
         }
         .frame(width: 96, height: 96)
@@ -139,7 +191,7 @@ struct ProfileView: View {
     }
 
     private func save() {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = trimmedName
         guard !trimmed.isEmpty else { return }
 
         if let data = pendingAvatarData {

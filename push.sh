@@ -17,4 +17,5 @@ git add -A
 git status --short
 
 git commit -m "$MESSAGE" || echo "Nothing to commit."
-git push
+# -u origin HEAD works on main and on a brand-new branch with no upstream yet.
+git push -u origin HEAD

@@ -188,6 +188,17 @@ final class MessageStore {
         return expired.count
     }
 
+    /// Deletes every stored message and group ("Forget everything").
+    func deleteAll() {
+        if let messages = try? context.fetch(FetchDescriptor<PersistedMessage>()) {
+            for message in messages { context.delete(message) }
+        }
+        if let groups = try? context.fetch(FetchDescriptor<PersistedGroup>()) {
+            for group in groups { context.delete(group) }
+        }
+        trySave()
+    }
+
     private func trySave() {
         do {
             try context.save()
@@ -236,6 +247,18 @@ final class ProfileStore: ObservableObject {
     func markFirstRunShown() {
         guard isFirstRun else { return }
         persist()
+    }
+
+    /// Forgets the profile entirely (name and photo) and returns to the
+    /// first-run state, with the device's default name.
+    func reset() {
+        if let dir = Self.profileDirectory() {
+            try? FileManager.default.removeItem(at: dir.appendingPathComponent(avatarFileName))
+        }
+        UserDefaults.standard.removeObject(forKey: defaultsKey)
+        UserDefaults.standard.removeObject(forKey: "app-chat.displayName")
+        profile = UserProfile(displayName: Self.defaultDisplayName(), avatarFileName: nil)
+        isFirstRun = true
     }
 
     var avatarURL: URL? {

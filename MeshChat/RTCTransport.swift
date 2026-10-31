@@ -427,7 +427,7 @@ final class WebRTCManager {
     /// forever.
     private func scheduleExpiry(_ cid: String) {
         Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 300_000_000_000)
+            try? await Task.sleep(nanoseconds: UInt64(MeshManager.inviteLifetime) * 1_000_000_000)
             guard let self, let link = self.pending[cid] else { return }
             self.pending[cid] = nil
             link.close()

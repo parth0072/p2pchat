@@ -48,12 +48,16 @@ Before running:
 | `MeshManager.swift` | The core engine: MCSession/advertiser/browser wrapper, discovery, trust (`TrustStore`), end-to-end encryption, multi-hop relay + topology gossip, reconnect backoff, file transfer, notifications, structured logging |
 | `CryptoIdentity.swift` | Curve25519 identity key (Keychain-backed) + AES-GCM per-peer encrypt/decrypt for end-to-end message encryption |
 | `Persistence.swift` | SwiftData schema (`PersistedMessage`, `PersistedGroup`) + `MessageStore`; local `ProfileStore` (display name + avatar) |
-| `PeerListView.swift` | Peer list with live connection state, trust prompt, group switcher |
-| `ChatView.swift` | Message thread, composer, attachments (photo/video/document), stickers, cancellable transfer progress, route indicator |
+| `PeerListView.swift` | Home screen (Mac sidebar / iPhone list): route-ring avatars, summary, "Relay for others" switch, Local Network paused state, trust prompt, group switcher |
+| `ChatView.swift` | Message thread, composer, attachments (photo/video/document), stickers, cancellable transfer progress, expiry chip, route + encryption pill |
 | `RTCTransport.swift` | WebRTC data-channel links (offer/answer, ICE, send/receive) and the compact signal codec used for QR codes / pasted text |
-| `InternetLinkView.swift` | "Internet Chat" sheet: create an invite (QR + text), paste a code, show the reply code |
+| `InternetLinkView.swift` | Guided "Internet chat" flow: invite (show code, scan reply) and join (scan or paste, show reply) paths, connecting, success, no-route and expired screens, plus the optional relay-server settings |
+| `PrivacyView.swift` | "Privacy & security": what's encrypted and stored, switches for internet chat and relaying for others, relay server, and "Forget everything" |
+| `Components.swift` | Shared UI pieces: buttons, sheet scaffold, banners, step bar, QR card, clipboard helper |
 | `QRScannerView.swift` | Camera QR scanner (AVFoundation) for invite/reply codes; needs camera permission (`NSCameraUsageDescription`, macOS camera entitlement) |
-| `ProfileView.swift` | Edit your display name and avatar photo |
+| `ProfileView.swift` | Edit your display name and avatar photo; replay the welcome tour |
+| `OnboardingView.swift` | First-launch flow: three intro beats, a permissions explainer, then your name. Shown once; discovery starts only after it |
+| `Theme.swift` | Brand palette, lavender background, route-ring avatars, route tags, expiry chip, and the chat-bubble style |
 | `DiscoveryView.swift` | Live, dark "network ops" style visualization of the mesh topology graph |
 | `Info.plist` | The target's actual Info.plist (Bonjour/local network/Bluetooth/photo usage keys) |
 | `MeshChat.entitlements` | Sandbox entitlements applied to the macOS build |

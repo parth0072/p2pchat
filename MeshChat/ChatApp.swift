@@ -84,29 +84,54 @@ struct RootView: View {
     let store: MessageStore
     @State private var selectedPeer: DiscoveredPeer?
     @State private var knownGroups: [ChatGroup] = [ChatGroup(name: "General")]
+    @AppStorage(OnboardingFlag.key) private var onboardingDone = false
 
     var body: some View {
         Group {
-            #if os(macOS)
-            NavigationSplitView {
-                PeerListView(mesh: mesh, profileStore: profileStore, selectedPeer: $selectedPeer, knownGroups: $knownGroups)
-            } detail: {
-                if let selectedPeer {
-                    ChatView(mesh: mesh, peer: selectedPeer, store: store)
-                } else {
-                    NoPeerSelectedView(mesh: mesh)
+            if onboardingDone {
+                mainContent
+            } else {
+                // Discovery (and the permission prompts it triggers) only
+                // starts once the main screen appears, i.e. after this.
+                OnboardingView(profileStore: profileStore, mesh: mesh) {
+                    onboardingDone = true
                 }
             }
-            #else
-            NavigationStack {
-                PeerListView(mesh: mesh, profileStore: profileStore, selectedPeer: $selectedPeer, knownGroups: $knownGroups)
-                    .navigationDestination(item: $selectedPeer) { peer in
-                        ChatView(mesh: mesh, peer: peer, store: store)
-                    }
-            }
-            #endif
         }
+        .brandTint()
         .onAppear(perform: loadKnownGroups)
+        .onChange(of: onboardingDone) {
+            // Finishing the welcome flow (including after "Forget
+            // everything") starts from a clean selection and group list.
+            guard onboardingDone else { return }
+            selectedPeer = nil
+            knownGroups = [ChatGroup(name: "General")]
+            loadKnownGroups()
+        }
+    }
+
+    @ViewBuilder
+    private var mainContent: some View {
+        #if os(macOS)
+        NavigationSplitView {
+            PeerListView(mesh: mesh, profileStore: profileStore, selectedPeer: $selectedPeer, knownGroups: $knownGroups)
+                .navigationSplitViewColumnWidth(min: 270, ideal: 300, max: 360)
+        } detail: {
+            if let selectedPeer {
+                ChatView(mesh: mesh, peer: selectedPeer, store: store)
+            } else {
+                NoPeerSelectedView(mesh: mesh)
+                    .brandBackground()
+            }
+        }
+        #else
+        NavigationStack {
+            PeerListView(mesh: mesh, profileStore: profileStore, selectedPeer: $selectedPeer, knownGroups: $knownGroups)
+                .navigationDestination(item: $selectedPeer) { peer in
+                    ChatView(mesh: mesh, peer: peer, store: store)
+                }
+        }
+        #endif
     }
 
     /// Restores every group the user has ever created (persisted via
@@ -178,7 +203,7 @@ private struct InAppBannerView: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(.white)
                 .frame(width: 30, height: 30)
-                .background(Circle().fill(Color.accentColor))
+                .background(Circle().fill(Brand.accent))
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack {

@@ -38,6 +38,9 @@ struct ChatView: View {
             ScrollViewReader { scrollProxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 8) {
+                        ExpiryChip()
+                            .frame(maxWidth: .infinity)
+                            .padding(.bottom, 6)
                         ForEach(conversationMessages) { message in
                             MessageBubble(
                                 message: message,
@@ -84,6 +87,18 @@ struct ChatView: View {
             composer
         }
         .navigationTitle(peer.mcPeerID.displayName)
+        #if os(macOS)
+        .navigationSubtitle(routeSubtitle)
+        #else
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                chatHeader
+            }
+        }
+        #endif
+        .brandBackground()
         .onAppear { mesh.isChatViewVisible = true }
         .onDisappear { mesh.isChatViewVisible = false }
         .sheet(item: $previewMessage) { message in
@@ -170,6 +185,7 @@ struct ChatView: View {
                         }
                     }
                 }
+                .cardStyle()
                 .padding(.horizontal)
                 .padding(.top, 4)
             }
@@ -201,22 +217,106 @@ struct ChatView: View {
     /// only work when it's direct), so this stays visible right above the
     /// composer instead of being buried in the Discovery graph.
     private var routeIndicator: some View {
-        HStack(spacing: 4) {
-            Image(systemName: routeIsDirect ? "arrow.right" : "arrow.triangle.branch")
-                .font(.caption2)
-            Text(routeLabel)
-                .font(.caption2)
-            // Messages are end-to-end encrypted regardless of route (direct
-            // or multi-hop) — the lock reassures that even relay hops on a
-            // multi-hop path can't read the content, only pass along the
-            // sealed envelope.
-            Image(systemName: "lock.fill")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-        .foregroundStyle(routeIsDirect ? Color.secondary : Color.orange)
-        .padding(.horizontal, 8)
+        routePill
     }
+
+    /// One centred pill — how this chat is routed, and that it's end-to-end
+    /// encrypted. Messages are sealed to the recipient on every route, so
+    /// even relay hops on a multi-hop path only ever pass along the sealed
+    /// envelope; the lock is a real guarantee, not decoration.
+    private var routePill: some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 5) {
+                Image(systemName: routeIcon)
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(routeIsDirect ? Brand.accent : Brand.warning)
+                Text(routeShortLabel)
+                    .font(.caption.weight(.semibold))
+            }
+            Text("•")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+            HStack(spacing: 4) {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 9))
+                Text("End-to-end encrypted")
+                    .font(.caption)
+            }
+            .foregroundStyle(Brand.encrypted)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 5)
+        .background(Brand.surface, in: Capsule())
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
+        .frame(maxWidth: .infinity)
+    }
+
+    private var routeIcon: String {
+        if routeIsInternet { return "globe" }
+        return routeIsDirect ? "circle" : "arrow.triangle.branch"
+    }
+
+    /// Short route name for the pill: "Direct · Nearby", "Relayed · 3 hops", …
+    private var routeShortLabel: String {
+        if routeIsInternet { return "Internet · Peer-to-peer" }
+        switch routeHopCount {
+        case nil:
+            return peer.state == .connecting ? "Connecting…" : "Route unknown"
+        case 0, 1:
+            return "Direct · Nearby"
+        case let hop?:
+            return "Relayed · \(hop) hops"
+        }
+    }
+
+    /// Window subtitle under the person's name.
+    private var routeSubtitle: String {
+        if routeIsInternet { return "Internet · Direct" }
+        switch routeHopCount {
+        case nil:
+            return peer.state == .connecting ? "Connecting…" : "Route unknown"
+        case 0, 1:
+            return "Nearby · Direct"
+        case let hop?:
+            return "Relayed · \(hop) hops"
+        }
+    }
+
+    #if os(iOS)
+    /// Centred header: avatar, name and how you're connected.
+    private var chatHeader: some View {
+        HStack(spacing: 8) {
+            AvatarView(name: peer.mcPeerID.displayName, size: 34, ring: headerRing)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(peer.mcPeerID.displayName)
+                    .font(.subheadline.weight(.bold))
+                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(Brand.color(for: livePeer.state))
+                        .frame(width: 6, height: 6)
+                    Text(routeSubtitle)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.leading, 6)
+        .padding(.trailing, 14)
+        .padding(.vertical, 4)
+        .background(Brand.surface, in: Capsule())
+        .shadow(color: .black.opacity(0.06), radius: 3, y: 1)
+    }
+
+    private var headerRing: AvatarRing {
+        if routeIsInternet { return .internet }
+        switch routeHopCount {
+        case nil: return livePeer.state == .connecting ? .connecting : .none
+        case 0, 1: return .direct
+        case let hop?: return .relayed(hops: hop)
+        }
+    }
+    #endif
 
     /// The peer's current state (ChatView is handed a snapshot when the chat
     /// opens, which doesn't reflect later link changes).
@@ -226,7 +326,7 @@ struct ChatView: View {
 
     /// Messages to this peer are going out over their WebRTC link.
     private var routeIsInternet: Bool {
-        mesh.internetAvailable && mesh.internetLinkedPeerIDs.contains(peer.id)
+        mesh.internetUsable && mesh.internetLinkedPeerIDs.contains(peer.id)
     }
 
     private var routeHopCount: Int? {
@@ -235,20 +335,6 @@ struct ChatView: View {
 
     private var routeIsDirect: Bool {
         routeIsInternet || (routeHopCount ?? .max) <= 1
-    }
-
-    private var routeLabel: String {
-        if routeIsInternet {
-            return "Internet · peer-to-peer"
-        }
-        switch routeHopCount {
-        case nil:
-            return peer.state == .connecting ? "Connecting…" : "Route unknown"
-        case 0, 1:
-            return "Direct connection"
-        case let hop?:
-            return "Multi-hop · \(hop) hops via mesh"
-        }
     }
 
     private var composerRow: some View {
@@ -264,9 +350,12 @@ struct ChatView: View {
             .contentShape(Rectangle())
             .disabled(peer.isRelayed || livePeer.internetOnly)
             .opacity(peer.isRelayed || livePeer.internetOnly ? 0.4 : 1)
+            .buttonStyle(.plain)
+            .foregroundStyle(Brand.accent)
+            .accessibilityLabel("Attach")
 
             TextField("Message", text: $draft, axis: .vertical)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(.plain)
                 .focused($isComposerFocused)
                 .onChange(of: draft) {
                     mesh.sendTypingIndicator(isTyping: !draft.isEmpty, to: peer)
@@ -280,9 +369,18 @@ struct ChatView: View {
             .frame(width: composerTapTarget, height: composerTapTarget)
             .contentShape(Rectangle())
             .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .buttonStyle(.plain)
+            .foregroundStyle(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                             ? Color.secondary.opacity(0.4)
+                             : Brand.accent)
+            .accessibilityLabel("Send")
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
+        .background(Brand.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .shadow(color: .black.opacity(0.06), radius: 4, y: 1)
+        .padding(.horizontal, 12)
+        .padding(.bottom, 10)
     }
 
     /// iOS gets touch-appropriate sizing (Apple HIG wants >=44pt tap
@@ -462,25 +560,23 @@ private struct MessageBubble: View {
         }
     }
 
+    /// Sender name above, the bubble itself, timestamp below.
     private var standardBubble: some View {
         HStack {
-            if isMine { Spacer(minLength: 40) }
+            if isMine { Spacer(minLength: 60) }
             VStack(alignment: isMine ? .trailing : .leading, spacing: 4) {
                 if !isMine {
                     Text(message.senderName)
-                        .font(.caption2)
+                        .font(.caption2.weight(.semibold))
                         .foregroundStyle(.secondary)
                 }
                 content
+                    .chatBubbleStyle(isMine: isMine)
                 Text(message.timestamp, style: .time)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
-            .padding(10)
-            .background(isMine ? Color.accentColor.opacity(0.85) : Color.gray.opacity(0.2))
-            .foregroundStyle(isMine ? Color.white : Color.primary)
-            .clipShape(RoundedRectangle(cornerRadius: 14))
-            if !isMine { Spacer(minLength: 40) }
+            if !isMine { Spacer(minLength: 60) }
         }
     }
 
