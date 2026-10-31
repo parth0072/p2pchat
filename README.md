@@ -33,24 +33,9 @@ Internet first, nearby mesh as the fallback. Messages are encrypted on your devi
 
 No server stores or reads anything. Each phone shows a code and the other scans it, once each way; then the two phones find each other directly.
 
-```mermaid
-flowchart LR
-    subgraph You["You — creating the invite"]
-        A1["1 · Create invite<br/>tap Invite someone"] --> A2["2 · Show invite<br/>QR code or text"]
-        A5["5 · Scan their reply<br/>or paste it"] --> A6["6 · Finding a route<br/>a few seconds"] --> A7["7 · Connected<br/>encrypted, direct"]
-    end
-    subgraph Friend["Your friend — joining"]
-        B3["3 · Scan the invite<br/>or paste it"] --> B4["4 · Show reply<br/>QR code or text"] --> B6["6 · Finding a route<br/>a few seconds"] --> B7["7 · Connected<br/>encrypted, direct"]
-    end
-    A2 -- invite code --> B3
-    B4 -- reply code --> A5
-    A6 -.-> NR["No direct route?<br/>Add a relay server, then retry"]
-```
+![Two codes, two scans, one direct link: you create and show an invite, your friend scans it and shows a reply, you scan the reply, both phones find a route and connect, encrypted and direct](docs/design/internet-link-flow.svg)
 
 Devices that have already met on the nearby mesh skip this — they link automatically.
-
-The screen designs for this flow, onboarding, permissions and the Mac layout are in the public design canvas: [MeshChat — Signal Direction](https://claude.ai/artifact/K7JpmLH27TBWmjs69XdE2G).
-
 ## Download & run (macOS)
 
 GitHub Actions builds the Mac app whenever a version tag (like `v1.0.0`) is pushed and publishes it as a GitHub Release; the newest one is the [**latest release**](https://github.com/parth0072/p2pchat/releases/latest). Requires **macOS 14 or newer**; you need two devices running MeshChat to chat.

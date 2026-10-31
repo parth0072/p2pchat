@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1020 500" width="1020" height="500" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" role="img" aria-labelledby="t d">
+  <title id="t">Two codes, two scans, one direct link</title>
+  <desc id="d">Internet chat setup. You create an invite and show it; your friend scans it and shows a reply; you scan the reply; both phones find a route and connect, encrypted and direct. If no direct route is found, add a relay server and retry.</desc>
+
+  <defs>
+    <linearGradient id="glow" x1="1" y1="0" x2="0.55" y2="0.45">
+      <stop offset="0" stop-color="#d9d9f7" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#d9d9f7" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-20%" width="120%" height="150%">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#2a2850" flood-opacity="0.14"/>
+    </filter>
+    <marker id="arrowGrey" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#5b5a78"/>
+    </marker>
+    <marker id="arrowPurple" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#5b4bd6"/>
+    </marker>
+    <marker id="arrowRed" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#c0583a"/>
+    </marker>
+  </defs>
+
+  <!-- background -->
+  <rect width="1020" height="500" fill="#f3f3f9"/>
+  <rect width="1020" height="500" fill="url(#glow)"/>
+
+  <!-- heading -->
+  <text x="37" y="53" font-size="18" font-weight="700" fill="#16161f">Two codes, two scans, one direct link</text>
+  <text x="37" y="76" font-size="9.5" fill="#3b3b4d">No server stores or reads anything. Each phone shows a code and the other scans it, once each way. Then the two</text>
+  <text x="37" y="89" font-size="9.5" fill="#3b3b4d">phones find each other.</text>
+
+  <!-- lane 1: you -->
+  <text x="37" y="130" font-size="8.5" font-weight="700" fill="#16161f">You · creating the invite</text>
+  <rect x="36" y="139" width="949" height="95" rx="22" fill="#e6e4f7"/>
+
+  <!-- lane 2: friend -->
+  <text x="37" y="322" font-size="8.5" font-weight="700" fill="#16161f">Your friend · joining</text>
+  <rect x="36" y="332" width="946" height="92" rx="22" fill="#dfdfe6"/>
+
+  <!-- horizontal arrows, lane 1 -->
+  <g stroke="#5b5a78" stroke-width="1" fill="none" marker-end="url(#arrowGrey)">
+    <line x1="192" y1="186" x2="248" y2="186"/>
+    <line x1="384" y1="186" x2="440" y2="186"/>
+    <line x1="576" y1="186" x2="632" y2="186"/>
+    <line x1="768" y1="186" x2="824" y2="186"/>
+  </g>
+  <!-- horizontal arrows, lane 2 -->
+  <g stroke="#5b5a78" stroke-width="1" fill="none" marker-end="url(#arrowGrey)">
+    <line x1="384" y1="378" x2="440" y2="378"/>
+    <line x1="576" y1="378" x2="632" y2="378"/>
+    <line x1="768" y1="378" x2="824" y2="378"/>
+  </g>
+
+  <!-- code hand-offs -->
+  <g stroke="#5b4bd6" stroke-width="1.5" fill="none">
+    <line x1="316" y1="213" x2="316" y2="350" marker-end="url(#arrowPurple)"/>
+    <line x1="508" y1="351" x2="508" y2="214" marker-end="url(#arrowPurple)"/>
+  </g>
+  <text x="335" y="284" font-size="8" fill="#3b3b4d">invite code</text>
+  <text x="529" y="284" font-size="8" fill="#3b3b4d">reply code</text>
+
+  <!-- no direct route branch -->
+  <g stroke="#c0583a" stroke-width="1" stroke-dasharray="3 3" fill="none">
+    <line x1="700" y1="213" x2="700" y2="253" marker-end="url(#arrowRed)"/>
+    <line x1="700" y1="309" x2="700" y2="350" marker-end="url(#arrowRed)"/>
+  </g>
+  <rect x="633" y="254" width="135" height="55" rx="12" fill="#e8dcd8" filter="url(#shadow)"/>
+  <text x="700.5" y="277" text-anchor="middle" font-size="9.5" font-weight="700" fill="#16161f">No direct route?</text>
+  <text x="700.5" y="290" text-anchor="middle" font-size="8" fill="#5a5a68">Add a relay server, then retry</text>
+
+  <!-- lane 1 boxes -->
+  <g filter="url(#shadow)">
+    <rect x="57" y="158" width="135" height="55" rx="12" fill="#fbfbfd"/>
+    <rect x="249" y="158" width="135" height="55" rx="12" fill="#fbfbfd"/>
+    <rect x="441" y="158" width="135" height="55" rx="12" fill="#fbfbfd"/>
+    <rect x="633" y="158" width="135" height="55" rx="12" fill="#fbfbfd"/>
+    <rect x="825" y="158" width="136" height="55" rx="12" fill="#cdd9dc"/>
+  </g>
+  <g text-anchor="middle" font-size="9.5" font-weight="700" fill="#16161f">
+    <text x="124.5" y="181">1 · Create invite</text>
+    <text x="316.5" y="181">2 · Show invite</text>
+    <text x="508.5" y="181">5 · Scan their reply</text>
+    <text x="700.5" y="181">6 · Finding a route</text>
+    <text x="893" y="181">7 · Connected</text>
+  </g>
+  <g text-anchor="middle" font-size="8" fill="#5a5a68">
+    <text x="124.5" y="194">Tap Invite someone</text>
+    <text x="316.5" y="194">QR code or text</text>
+    <text x="508.5" y="194">Or paste it</text>
+    <text x="700.5" y="194">A few seconds</text>
+    <text x="893" y="194">Encrypted, direct</text>
+  </g>
+
+  <!-- lane 2 boxes -->
+  <g filter="url(#shadow)">
+    <rect x="249" y="351" width="135" height="55" rx="12" fill="#fbfbfd"/>
+    <rect x="441" y="351" width="135" height="55" rx="12" fill="#fbfbfd"/>
+    <rect x="633" y="351" width="135" height="55" rx="12" fill="#fbfbfd"/>
+    <rect x="825" y="351" width="136" height="55" rx="12" fill="#c9d8d2"/>
+  </g>
+  <g text-anchor="middle" font-size="9.5" font-weight="700" fill="#16161f">
+    <text x="316.5" y="374">3 · Scan the invite</text>
+    <text x="508.5" y="374">4 · Show reply</text>
+    <text x="700.5" y="374">6 · Finding a route</text>
+    <text x="893" y="374">7 · Connected</text>
+  </g>
+  <g text-anchor="middle" font-size="8" fill="#5a5a68">
+    <text x="316.5" y="387">Or paste it</text>
+    <text x="508.5" y="387">QR code or text</text>
+    <text x="700.5" y="387">A few seconds</text>
+    <text x="893" y="387">Encrypted, direct</text>
+  </g>
+</svg>
