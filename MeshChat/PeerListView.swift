@@ -4,6 +4,23 @@ import MultipeerConnectivity
 import AppKit
 #endif
 
+/// Which home-screen sheet is open. Shared between the peer list and the Mac
+/// window toolbar so either can open them.
+@MainActor
+final class HomeSheets: ObservableObject {
+    @Published var groups = false
+    @Published var profile = false
+    @Published var discovery = false
+    @Published var internet = false
+
+    func closeAll() {
+        groups = false
+        profile = false
+        discovery = false
+        internet = false
+    }
+}
+
 /// Home screen: your group, who's around and how you're connected to each
 /// person. On the Mac this is the sidebar; on iPhone/iPad it's the first
 /// screen, with the same rows.
@@ -11,11 +28,27 @@ struct PeerListView: View {
     @ObservedObject var mesh: MeshManager
     @ObservedObject var profileStore: ProfileStore
     @Binding var selectedPeer: DiscoveredPeer?
-    @State var showingGroupSwitcher = false
-    @State var showingProfile = false
-    @State var showingDiscovery = false
-    @State var showingInternet = false
+    @ObservedObject var sheets: HomeSheets
     @Binding var knownGroups: [ChatGroup]
+
+    // The sheets are driven by shared state (HomeSheets) so the Mac window
+    // toolbar, which lives outside this view, can open them too.
+    private var showingGroupSwitcher: Bool {
+        get { sheets.groups }
+        nonmutating set { sheets.groups = newValue }
+    }
+    private var showingProfile: Bool {
+        get { sheets.profile }
+        nonmutating set { sheets.profile = newValue }
+    }
+    private var showingDiscovery: Bool {
+        get { sheets.discovery }
+        nonmutating set { sheets.discovery = newValue }
+    }
+    private var showingInternet: Bool {
+        get { sheets.internet }
+        nonmutating set { sheets.internet = newValue }
+    }
 
     /// Connected people first, then connecting, then everyone else — each
     /// group alphabetical.
@@ -44,52 +77,20 @@ struct PeerListView: View {
 
     var body: some View {
         screen
-            .navigationTitle(mesh.currentGroup.name)
             #if os(iOS)
+            .navigationTitle(mesh.currentGroup.name)
             .toolbar(.hidden, for: .navigationBar)
             #endif
-            #if os(macOS)
-            .toolbar {
-                ToolbarItem {
-                    Button {
-                        showingDiscovery = true
-                    } label: {
-                        Label("Discovery", systemImage: "point.3.connected.trianglepath.dotted")
-                    }
-                }
-                ToolbarItem {
-                    Button {
-                        showingGroupSwitcher = true
-                    } label: {
-                        Label("Groups", systemImage: "person.3")
-                    }
-                }
-                ToolbarItem {
-                    Button {
-                        showingInternet = true
-                    } label: {
-                        Label("Internet", systemImage: "globe")
-                    }
-                }
-                ToolbarItem {
-                    Button {
-                        showingProfile = true
-                    } label: {
-                        Label("Profile", systemImage: "person.crop.circle")
-                    }
-                }
-            }
-            #endif
-            .sheet(isPresented: $showingGroupSwitcher) {
+            .sheet(isPresented: $sheets.groups) {
                 GroupSwitcherView(mesh: mesh, knownGroups: $knownGroups)
             }
-            .sheet(isPresented: $showingProfile) {
+            .sheet(isPresented: $sheets.profile) {
                 ProfileView(profileStore: profileStore, mesh: mesh)
             }
-            .sheet(isPresented: $showingDiscovery) {
+            .sheet(isPresented: $sheets.discovery) {
                 DiscoveryView(mesh: mesh)
             }
-            .sheet(isPresented: $showingInternet) {
+            .sheet(isPresented: $sheets.internet) {
                 InternetLinkView(mesh: mesh, onOpenChat: { peer in
                     showingInternet = false
                     selectedPeer = peer
@@ -144,6 +145,8 @@ struct PeerListView: View {
 
             footer
         }
+        // On the Mac the window supplies the sidebar background; only the
+        // iPhone/iPad screen draws its own lavender wash.
         #if os(iOS)
         .background(BrandBackground())
         #endif
@@ -166,6 +169,8 @@ struct PeerListView: View {
             NearbyPausedView {
                 showingInternet = true
             }
+        } else if sortedPeers.isEmpty {
+            getConnectedPlaceholder(hasNearby: false)
         } else {
             #if os(macOS)
             Text("Nearby devices")
@@ -178,38 +183,89 @@ struct PeerListView: View {
             peerRows
                 .brandCard(cornerRadius: 22)
             #endif
+
+            // Devices are around but nobody is connected yet: keep every way
+            // of getting connected in view below the list.
+            if connectedCount == 0 {
+                getConnectedPlaceholder(hasNearby: true)
+                    .padding(.top, 8)
+            }
         }
     }
 
-    @ViewBuilder
     private var peerRows: some View {
-        if sortedPeers.isEmpty {
-            HStack(spacing: 10) {
-                ProgressView().controlSize(.small)
-                Text("Searching for nearby people…")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+        VStack(spacing: 2) {
+            ForEach(sortedPeers) { peer in
+                PeerRowCard(
+                    peer: peer,
+                    hops: mesh.hopDistance(to: peer.id),
+                    isSelected: selectedPeer?.id == peer.id,
+                    onSelect: { selectedPeer = peer },
+                    onConnect: { mesh.trust(peer) },
+                    onForget: { mesh.forget(peer) }
+                )
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        } else {
-            VStack(spacing: 2) {
-                ForEach(sortedPeers) { peer in
-                    PeerRowCard(
-                        peer: peer,
-                        hops: mesh.hopDistance(to: peer.id),
-                        isSelected: selectedPeer?.id == peer.id,
-                        onSelect: { selectedPeer = peer },
-                        onConnect: { mesh.trust(peer) },
-                        onForget: { mesh.forget(peer) }
-                    )
-                }
-            }
-            #if os(iOS)
-            .padding(6)
-            #endif
         }
+        #if os(iOS)
+        .padding(6)
+        #endif
+    }
+
+    /// Shown whenever nobody is connected: explains what's happening and puts
+    /// every way of getting connected one tap away — the same actions as the
+    /// toolbar, in the order a new user needs them. `hasNearby` is true when
+    /// devices were found but none is connected yet.
+    private func getConnectedPlaceholder(hasNearby: Bool) -> some View {
+        VStack(spacing: 14) {
+            ZStack {
+                Circle()
+                    .fill(Brand.surface)
+                    .frame(width: 64, height: 64)
+                    .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
+                Image(systemName: hasNearby ? "person.crop.circle.badge.questionmark" : "dot.radiowaves.left.and.right")
+                    .font(.system(size: 24, weight: .medium))
+                    .foregroundStyle(Brand.accent)
+            }
+            .padding(.top, 8)
+
+            VStack(spacing: 4) {
+                Text(hasNearby ? "No one connected yet" : "No one nearby yet")
+                    .font(.headline)
+                Text(hasNearby
+                     ? "Tap Connect on a device above, or connect another way:"
+                     : "Looking for devices in “\(mesh.currentGroup.name)”. Or connect another way:")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            VStack(spacing: 8) {
+                ConnectActionRow(
+                    icon: "globe",
+                    title: "Chat over the internet",
+                    detail: "Invite someone, or join with a code"
+                ) { showingInternet = true }
+                ConnectActionRow(
+                    icon: "person.3",
+                    title: "Join or create a group",
+                    detail: "Same group name, same room"
+                ) { showingGroupSwitcher = true }
+                ConnectActionRow(
+                    icon: "point.3.connected.trianglepath.dotted",
+                    title: "Network map",
+                    detail: "See who's around you"
+                ) { showingDiscovery = true }
+                ConnectActionRow(
+                    icon: "person.crop.circle",
+                    title: "Your profile",
+                    detail: "Set your name and photo"
+                ) { showingProfile = true }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 4)
+        .padding(.bottom, 8)
     }
 
     // MARK: Footer
@@ -242,23 +298,26 @@ struct PeerListView: View {
 
     #if os(macOS)
     private var macHeader: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Button {
-                showingGroupSwitcher = true
-            } label: {
-                HStack(spacing: 6) {
-                    Text(mesh.currentGroup.name)
-                        .font(.title2.bold())
-                        .lineLimit(1)
-                    Image(systemName: "chevron.down")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 0)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Button {
+                    showingGroupSwitcher = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(mesh.currentGroup.name)
+                            .font(.title2.bold())
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .contentShape(Rectangle())
                 }
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .help("Switch group")
+
+                Spacer(minLength: 4)
             }
-            .buttonStyle(.plain)
-            .help("Switch group")
 
             HStack(spacing: 6) {
                 Circle()
@@ -273,6 +332,7 @@ struct PeerListView: View {
         .padding(.top, 8)
         .padding(.bottom, 12)
     }
+
     #endif
 
     // MARK: iPhone / iPad header
@@ -499,6 +559,43 @@ private struct PeerRowCard: View {
                 .buttonStyle(.plain)
             }
         }
+    }
+}
+
+// MARK: - Get connected
+
+/// One tappable "do this to get connected" row: icon, title, one-line detail.
+struct ConnectActionRow: View {
+    let icon: String
+    let title: String
+    let detail: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                IconBadge(systemName: icon, size: 32)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
+            .brandCard(cornerRadius: 14)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 

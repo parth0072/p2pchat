@@ -84,7 +84,9 @@ struct RootView: View {
     let store: MessageStore
     @State private var selectedPeer: DiscoveredPeer?
     @State private var knownGroups: [ChatGroup] = [ChatGroup(name: "General")]
+    @StateObject private var sheets = HomeSheets()
     @AppStorage(OnboardingFlag.key) private var onboardingDone = false
+    @AppStorage(AppAppearance.key) private var appearanceRaw = AppAppearance.light.rawValue
 
     var body: some View {
         Group {
@@ -99,6 +101,7 @@ struct RootView: View {
             }
         }
         .brandTint()
+        .preferredColorScheme(AppAppearance.from(appearanceRaw).colorScheme)
         .onAppear(perform: loadKnownGroups)
         .onChange(of: onboardingDone) {
             // Finishing the welcome flow (including after "Forget
@@ -113,26 +116,81 @@ struct RootView: View {
     @ViewBuilder
     private var mainContent: some View {
         #if os(macOS)
-        NavigationSplitView {
-            PeerListView(mesh: mesh, profileStore: profileStore, selectedPeer: $selectedPeer, knownGroups: $knownGroups)
-                .navigationSplitViewColumnWidth(min: 270, ideal: 300, max: 360)
-        } detail: {
-            if let selectedPeer {
-                ChatView(mesh: mesh, peer: selectedPeer, store: store)
-            } else {
-                NoPeerSelectedView(mesh: mesh)
+        // A plain two-pane layout rather than NavigationSplitView: the system
+        // split view hosted the sidebar in a way that left it blank, and this
+        // gives the sidebar and detail the exact Signal look.
+        HStack(spacing: 0) {
+            PeerListView(mesh: mesh, profileStore: profileStore, selectedPeer: $selectedPeer, sheets: sheets, knownGroups: $knownGroups)
+                .frame(width: 300)
+                .frame(maxHeight: .infinity)
+                .background(Brand.sidebar.ignoresSafeArea())
+
+            Divider()
+
+            Group {
+                if let selectedPeer {
+                    ChatView(mesh: mesh, peer: selectedPeer, store: store)
+                        .id(selectedPeer.id)
+                } else {
+                    NoPeerSelectedView(
+                        mesh: mesh,
+                        onInternet: { sheets.internet = true },
+                        onGroups: { sheets.groups = true }
+                    )
                     .brandBackground()
+                    .navigationTitle(mesh.currentGroup.name)
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .frame(minWidth: 860, minHeight: 560)
+        .toolbar { homeToolbar }
         #else
         NavigationStack {
-            PeerListView(mesh: mesh, profileStore: profileStore, selectedPeer: $selectedPeer, knownGroups: $knownGroups)
+            PeerListView(mesh: mesh, profileStore: profileStore, selectedPeer: $selectedPeer, sheets: sheets, knownGroups: $knownGroups)
                 .navigationDestination(item: $selectedPeer) { peer in
                     ChatView(mesh: mesh, peer: peer, store: store)
                 }
         }
         #endif
     }
+
+    #if os(macOS)
+    /// The window's top-right action buttons — everything a new user needs to
+    /// get connected, available from any screen.
+    @ToolbarContentBuilder
+    private var homeToolbar: some ToolbarContent {
+        ToolbarItemGroup(placement: .primaryAction) {
+            Button {
+                sheets.discovery = true
+            } label: {
+                Label("Network map", systemImage: "point.3.connected.trianglepath.dotted")
+            }
+            .help("Network map")
+
+            Button {
+                sheets.groups = true
+            } label: {
+                Label("Groups", systemImage: "person.3")
+            }
+            .help("Groups")
+
+            Button {
+                sheets.internet = true
+            } label: {
+                Label("Internet chat", systemImage: "globe")
+            }
+            .help("Chat over the internet")
+
+            Button {
+                sheets.profile = true
+            } label: {
+                Label("Profile", systemImage: "person.crop.circle")
+            }
+            .help("Profile, appearance and privacy")
+        }
+    }
+    #endif
 
     /// Restores every group the user has ever created (persisted via
     /// MessageStore.saveGroup/PersistedGroup) into the switcher list, plus
@@ -160,31 +218,75 @@ struct RootView: View {
 /// "peers are right there, just pick one."
 private struct NoPeerSelectedView: View {
     @ObservedObject var mesh: MeshManager
+    let onInternet: () -> Void
+    let onGroups: () -> Void
 
     private var connectedCount: Int {
         mesh.discoveredPeers.values.filter { $0.state == .connected }.count
     }
 
-    var body: some View {
+    private var icon: String {
+        if mesh.discoveredPeers.isEmpty { return "dot.radiowaves.left.and.right" }
+        return connectedCount == 0 ? "person.crop.circle.badge.questionmark" : "bubble.left.and.bubble.right"
+    }
+
+    private var title: String {
+        if mesh.discoveredPeers.isEmpty { return "No one nearby yet" }
+        return connectedCount == 0 ? "Pick someone to connect" : "Choose a conversation"
+    }
+
+    private var message: String {
         if mesh.discoveredPeers.isEmpty {
-            ContentUnavailableView(
-                "No Peers Yet",
-                systemImage: "person.2.slash",
-                description: Text("Waiting for nearby devices on group \"\(mesh.currentGroup.name)\". Make sure Wi-Fi or Bluetooth is on.")
-            )
-        } else if connectedCount == 0 {
-            ContentUnavailableView(
-                "Check Nearby Peers",
-                systemImage: "person.crop.circle.badge.questionmark",
-                description: Text("Devices are nearby but not connected yet. Select one in the sidebar and tap Connect.")
-            )
-        } else {
-            ContentUnavailableView(
-                "Select a Peer",
-                systemImage: "bubble.left.and.bubble.right",
-                description: Text("Choose a connected device from the sidebar to start chatting.")
-            )
+            return "Looking for devices in \"\(mesh.currentGroup.name)\". Make sure Wi-Fi or Bluetooth is on, or start an internet chat from the globe button."
         }
+        if connectedCount == 0 {
+            return "Devices are nearby but not connected yet. Select one in the sidebar and tap Connect."
+        }
+        return "Pick someone from the sidebar to start chatting. Everything is end-to-end encrypted."
+    }
+
+    var body: some View {
+        VStack(spacing: 18) {
+            ZStack {
+                Circle()
+                    .fill(Brand.surface)
+                    .frame(width: 92, height: 92)
+                    .shadow(color: .black.opacity(0.08), radius: 8, y: 3)
+                Image(systemName: icon)
+                    .font(.system(size: 34, weight: .medium))
+                    .foregroundStyle(Brand.accent)
+            }
+            Text(title)
+                .font(.system(size: 24, weight: .heavy))
+            Text(message)
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 360)
+            if connectedCount == 0 {
+                VStack(spacing: 10) {
+                    Button(action: onInternet) {
+                        Label("Chat over the internet", systemImage: "globe")
+                    }
+                    .buttonStyle(BrandButtonStyle())
+                    Button(action: onGroups) {
+                        Label("Join or create a group", systemImage: "person.3")
+                    }
+                    .buttonStyle(BrandButtonStyle(kind: .secondary))
+                }
+                .frame(maxWidth: 280)
+                .padding(.top, 4)
+            }
+            Label("End-to-end encrypted", systemImage: "lock.fill")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(Brand.encrypted)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .background(Brand.surface, in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
+        }
+        .padding(32)
     }
 }
 

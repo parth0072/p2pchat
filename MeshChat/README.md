@@ -43,7 +43,7 @@ Before running:
 
 | File | Purpose |
 |---|---|
-| `ChatApp.swift` | App entry point; adaptive root (`NavigationSplitView` on macOS, `NavigationStack` on iOS); restores known groups and reopens the last-active group on launch |
+| `ChatApp.swift` | App entry point; adaptive root (sidebar + detail panes on macOS, `NavigationStack` on iOS); restores known groups and reopens the last-active group on launch |
 | `Models.swift` | Codable message/peer/group/transfer models, wire-format envelope, discovery-info keys, log categories |
 | `MeshManager.swift` | The core engine: MCSession/advertiser/browser wrapper, discovery, trust (`TrustStore`), end-to-end encryption, multi-hop relay + topology gossip, reconnect backoff, file transfer, notifications, structured logging |
 | `CryptoIdentity.swift` | Curve25519 identity key (Keychain-backed) + AES-GCM per-peer encrypt/decrypt for end-to-end message encryption |

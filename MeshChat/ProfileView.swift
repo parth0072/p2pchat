@@ -12,6 +12,7 @@ struct ProfileView: View {
     @ObservedObject var mesh: MeshManager
     @Environment(\.dismiss) private var dismiss
     @AppStorage(OnboardingFlag.key) private var onboardingDone = true
+    @AppStorage(AppAppearance.key) private var appearanceRaw = AppAppearance.light.rawValue
 
     @State private var name: String
     @State private var photoPickerItem: PhotosPickerItem?
@@ -55,6 +56,17 @@ struct ProfileView: View {
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 4)
                             .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        SectionCaption("Appearance")
+                        Picker("Appearance", selection: $appearanceRaw) {
+                            ForEach(AppAppearance.allCases) { option in
+                                Text(option.title).tag(option.rawValue)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
                     }
 
                     Button {

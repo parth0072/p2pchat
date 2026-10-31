@@ -24,13 +24,29 @@ enum Brand {
     static let error = Color(red: 0.76, green: 0.22, blue: 0.26)
 
     /// Surface for cards, "their" bubbles and the composer — white in light
-    /// mode, a raised dark grey in dark mode.
-    static var surface: Color {
+    /// mode, a raised indigo-tinted dark in dark mode.
+    static let surface = adaptive(light: (1, 1, 1), dark: (0.14, 0.13, 0.22))
+
+    /// Base colour behind every screen — near-white lavender, or a deep
+    /// indigo-black.
+    static let background = adaptive(light: (0.955, 0.955, 0.985), dark: (0.055, 0.05, 0.105))
+
+    /// Mac sidebar panel — a touch deeper than the page behind the chat.
+    static let sidebar = adaptive(light: (0.925, 0.925, 0.965), dark: (0.085, 0.078, 0.16))
+
+    /// A colour that switches between a light and a dark RGB value with the
+    /// appearance of whatever view it's drawn in.
+    static func adaptive(light: (CGFloat, CGFloat, CGFloat), dark: (CGFloat, CGFloat, CGFloat)) -> Color {
         #if os(macOS)
-        return Color(nsColor: .controlBackgroundColor)
+        return Color(nsColor: NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            let c = isDark ? dark : light
+            return NSColor(srgbRed: c.0, green: c.1, blue: c.2, alpha: 1)
+        })
         #else
         return Color(uiColor: UIColor { traits in
-            traits.userInterfaceStyle == .dark ? UIColor(white: 0.14, alpha: 1) : UIColor.white
+            let c = traits.userInterfaceStyle == .dark ? dark : light
+            return UIColor(red: c.0, green: c.1, blue: c.2, alpha: 1)
         })
         #endif
     }
@@ -53,17 +69,53 @@ struct BrandBackground: View {
 
     var body: some View {
         ZStack {
-            (scheme == .dark
-                ? Color(red: 0.07, green: 0.07, blue: 0.12)
-                : Color(red: 0.965, green: 0.965, blue: 0.985))
+            Brand.background
             RadialGradient(
-                colors: [Brand.accent.opacity(scheme == .dark ? 0.28 : 0.15), .clear],
+                colors: [Brand.accent.opacity(scheme == .dark ? 0.30 : 0.16), .clear],
                 center: .topTrailing,
                 startRadius: 0,
-                endRadius: 560
+                endRadius: 760
+            )
+            RadialGradient(
+                colors: [Brand.accent.opacity(scheme == .dark ? 0.14 : 0.06), .clear],
+                center: .bottomLeading,
+                startRadius: 0,
+                endRadius: 520
             )
         }
         .ignoresSafeArea()
+    }
+}
+
+// MARK: - Appearance
+
+/// Light, dark, or follow the system. The app opens in light, matching the
+/// primary Signal design; this is changed from the Profile screen.
+enum AppAppearance: String, CaseIterable, Identifiable {
+    case light, dark, system
+
+    static let key = "app-chat.appearance"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .light: return "Light"
+        case .dark: return "Dark"
+        case .system: return "System"
+        }
+    }
+
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .light: return .light
+        case .dark: return .dark
+        case .system: return nil
+        }
+    }
+
+    static func from(_ raw: String) -> AppAppearance {
+        AppAppearance(rawValue: raw) ?? .light
     }
 }
 
@@ -248,9 +300,13 @@ struct ExpiryChip: View {
 // MARK: - Shared styling helpers
 
 extension View {
-    /// The lavender brand background behind a whole screen.
+    /// The lavender brand background behind a whole screen. The view is
+    /// stretched to fill its container first, so short content (an empty
+    /// state) gets the full-pane background instead of a small patch.
     func brandBackground() -> some View {
-        self.background(BrandBackground())
+        self
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(BrandBackground())
     }
 
     /// Tints controls with the brand indigo.
