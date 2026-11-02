@@ -25,8 +25,10 @@ enum AppAnalytics {
         UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? true
     }
 
-    /// Call once at launch.
+    /// Call once at launch. Only release builds report: runs from Xcode use
+    /// the Debug configuration, where Firebase is never started.
     static func start() {
+        #if !DEBUG
         guard FirebaseApp.app() == nil else { return }
         // A missing or empty config (e.g. a CI build without the secret) is
         // skipped rather than crashing inside Firebase.
@@ -39,6 +41,7 @@ enum AppAnalytics {
         if isEnabled {
             Analytics.logEvent(AnalyticsEventAppOpen, parameters: nil)
         }
+        #endif
     }
 
     /// Pushes the user's choice to Firebase. Call after it changes.

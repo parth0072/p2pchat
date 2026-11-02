@@ -90,7 +90,7 @@ Before running:
 
 ## Analytics
 
-The app reports anonymous install and open counts to Firebase Analytics so the owner can see how many devices installed it, when, and from which country and device type. Chats, names, groups and peers are never sent. Firebase tells installs apart by a random per-install ID, and no advertising ID is read. It is on by default and every user can switch it off under Profile > Privacy & security > Usage statistics.
+The app reports anonymous install and open counts to Firebase Analytics so the owner can see how many devices installed it, when, and from which country and device type. Chats, names, groups and peers are never sent. Firebase tells installs apart by a random per-install ID, and no advertising ID is read. It only runs in release builds (the tagged GitHub builds), never in Debug builds run from Xcode. It is on by default and every user can switch it off under Profile > Privacy & security > Usage statistics.
 
 Owner setup (once):
 
