@@ -14,7 +14,9 @@ permissions:
 jobs:
   build-macos:
     name: Build (macOS)
-    runs-on: macos-14
+    # Firebase 13 needs Xcode 26.2+; macos-26 ships Xcode 26.6, and the
+    # old macos-14 image is being retired.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
@@ -34,6 +36,21 @@ jobs:
           fi
           echo "value=$V" >> "$GITHUB_OUTPUT"
           echo "Building version $V"
+
+      # The Firebase config is not in the repo. It comes from the repository
+      # secret GOOGLE_SERVICE_INFO_PLIST (the plist, base64-encoded). Without
+      # the secret an empty plist is written so the build still passes; the
+      # app then simply reports no analytics.
+      - name: Add Firebase config
+        env:
+          GOOGLE_SERVICE_INFO_PLIST: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST }}
+        run: |
+          if [ -n "$GOOGLE_SERVICE_INFO_PLIST" ]; then
+            echo "$GOOGLE_SERVICE_INFO_PLIST" | base64 --decode > MeshChat/GoogleService-Info.plist
+          else
+            echo "No GOOGLE_SERVICE_INFO_PLIST secret; building without Firebase config."
+            printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict/></plist>\n' > MeshChat/GoogleService-Info.plist
+          fi
 
       # CODE_SIGNING_ALLOWED=NO skips code signing entirely — CI runners
       # don't have your Apple Developer certificate/team installed, and

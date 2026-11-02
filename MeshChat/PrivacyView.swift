@@ -8,6 +8,7 @@ struct PrivacyView: View {
     @ObservedObject var profileStore: ProfileStore
     @Environment(\.dismiss) private var dismiss
     @AppStorage(OnboardingFlag.key) private var onboardingDone = true
+    @AppStorage(AppAnalytics.enabledKey) private var analyticsEnabled = true
 
     @State private var showingRelay = false
     @State private var confirmForget = false
@@ -35,6 +36,9 @@ struct PrivacyView: View {
             } else {
                 mainContent
             }
+        }
+        .onChange(of: analyticsEnabled) {
+            AppAnalytics.apply()
         }
         .alert("Forget everything?", isPresented: $confirmForget) {
             Button("Forget Everything", role: .destructive, action: forgetEverything)
@@ -141,6 +145,20 @@ struct PrivacyView: View {
                         detail: "Reach people without sharing a network"
                     ) {
                         comingSoon
+                    }
+                }
+
+                SectionCaption("Usage statistics")
+                    .padding(.top, 8)
+                card {
+                    PrivacyRow(
+                        icon: "chart.bar",
+                        title: "Anonymous usage stats",
+                        detail: "Counts installs and opens, with country and device type. Never your messages, name or contacts"
+                    ) {
+                        Toggle("Anonymous usage stats", isOn: $analyticsEnabled)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
                     }
                 }
 

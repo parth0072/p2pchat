@@ -22,5 +22,8 @@ xcuserdata/
 .swiftpm/
 Package.resolved
 
+# Firebase config — kept out of the repo; CI writes it from a secret
+GoogleService-Info.plist
+
 # macOS
 .DS_Store

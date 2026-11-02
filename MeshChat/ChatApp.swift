@@ -20,6 +20,7 @@ struct ChatApp: App {
         let defaultGroup = ChatGroup(name: MeshManager.lastGroupName() ?? "General")
         let manager = MeshManager(displayName: displayName, group: defaultGroup)
         _mesh = StateObject(wrappedValue: manager)
+        AppAnalytics.start()
     }
 
     var body: some Scene {

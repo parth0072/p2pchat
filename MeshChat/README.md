@@ -53,6 +53,7 @@ Before running:
 | `RTCTransport.swift` | WebRTC data-channel links (offer/answer, ICE, send/receive) and the compact signal codec used for QR codes / pasted text |
 | `InternetLinkView.swift` | Guided "Internet chat" flow: invite (show code, scan reply) and join (scan or paste, show reply) paths, connecting, success, no-route and expired screens, plus the optional relay-server settings |
 | `PrivacyView.swift` | "Privacy & security": what's encrypted and stored, switches for internet chat and relaying for others, relay server, and "Forget everything" |
+| `AppAnalytics.swift` | Anonymous install/open counting through Firebase Analytics; does nothing unless `GoogleService-Info.plist` is bundled; user can switch it off in Privacy & security |
 | `Components.swift` | Shared UI pieces: buttons, sheet scaffold, banners, step bar, QR card, clipboard helper |
 | `QRScannerView.swift` | Camera QR scanner (AVFoundation) for invite/reply codes; needs camera permission (`NSCameraUsageDescription`, macOS camera entitlement) |
 | `ProfileView.swift` | Edit your display name and avatar photo; replay the welcome tour |
@@ -74,7 +75,7 @@ Before running:
 - **Files/photos/video**: `session.sendResource(at:withName:toPeer:withCompletionHandler:)` handles chunking/resumability; `Progress` is retained and surfaced as a cancellable transfer bar (only works for directly-connected peers, not relay-only ones). A large-file warning shows the estimated transfer time before sending. Received resources move into `Documents/Received/`.
 - **Notifications**: a real system notification posts even while the app is active on macOS (normally suppressed); an in-app banner stands in for it while the relevant chat isn't already open (suppressed if you're already looking at that conversation).
 - **Groups**: every group you create or join is persisted (SwiftData) and restored into the group switcher on relaunch, and the app reopens whichever group was active last time instead of always defaulting to "General."
-- **Dependencies**: the only third-party dependency is Google's WebRTC build via the [`stasel/WebRTC`](https://github.com/stasel/WebRTC) Swift package (resolved automatically by Xcode/CI; used for data channels only, no audio/video).
+- **Dependencies**: Google's WebRTC build via the [`stasel/WebRTC`](https://github.com/stasel/WebRTC) Swift package (used for data channels only, no audio/video), and the Firebase Analytics SDK from [`firebase/firebase-ios-sdk`](https://github.com/firebase/firebase-ios-sdk) (install/open counts only, see "Analytics"). Both are resolved automatically by Xcode/CI. Firebase 13 needs Xcode 26.2 or newer.
 - **Encryption at rest**: stored message text, sender names and attachment names/paths are AES-GCM encrypted (`LocalCrypto` in `Persistence.swift`) with a random per-install key in the Keychain, separate from the end-to-end identity key, so a copy of the database file is unreadable. IDs, timestamps and group names stay plain because queries and expiry need them. Received files in `Documents/Received/` are not encrypted by the app (rely on the OS / FileVault).
 - **Persistence**: `MessageStore` (SwiftData) saves every appended message keyed by `groupID`; `MeshManager.loadPersistedHistory(from:)` hydrates history on launch and on group switch, deduped by message `id`. Messages older than 24h are purged automatically — this app doesn't keep chat logs indefinitely.
 - **Logging**: structured `os.Logger` output (categorized discovery/connect/route/trust/error, subsystem = the app's bundle ID) so real device logs are inspectable in Console.app or Xcode's console when something needs debugging, without any in-app debug UI.
@@ -86,6 +87,19 @@ Before running:
 - Relay forwarding uses a hop-count limit rather than a full routing table — sufficient for the 15–20 peer target in the spec, not a general mesh router.
 - Internet links use public STUN plus an optional user-supplied TURN relay (none is bundled — this project runs no servers) and share offer/answer codes manually or over the mesh — a pasted code is trusted as much as the channel you pass it over, though a code can never replace the encryption key already known for a peer.
 - Encryption uses a long-lived per-install identity key, not per-session ephemeral keys — no Signal/Noise-style forward secrecy. A single compromised private key can decrypt that device's past traffic if an attacker also captured it off the wire. Chosen because multi-hop relay means a message can be in flight for seconds, and rotating keys mid-session would strand it. MultipeerConnectivity's own `encryptionPreference: .required` still protects each hop's link on top of this.
+
+## Analytics
+
+The app reports anonymous install and open counts to Firebase Analytics so the owner can see how many devices installed it, when, and from which country and device type. Chats, names, groups and peers are never sent. Firebase tells installs apart by a random per-install ID, and no advertising ID is read. It is on by default and every user can switch it off under Profile > Privacy & security > Usage statistics.
+
+Owner setup (once):
+
+1. In the [Firebase console](https://console.firebase.google.com) create a project and add an **iOS app** with bundle ID `com.app.test` (the same ID is used on the Mac).
+2. Download `GoogleService-Info.plist` and put it in `MeshChat/` (it is already part of the Xcode target). It is git-ignored and must not be committed. Without a valid file the app runs normally and reports nothing.
+3. For GitHub release builds, add the repository secret `GOOGLE_SERVICE_INFO_PLIST` (Settings > Secrets and variables > Actions) containing the file base64-encoded: `base64 -i MeshChat/GoogleService-Info.plist | pbcopy`. The workflow writes it into the build; without the secret, releases report nothing.
+4. Installs and opens appear under Analytics > Realtime and Reports (`first_open` is an install, `app_open` and `session_start` are opens; country, city, device model and OS version are standard Firebase dimensions).
+
+Note: a Mac build that is only ad-hoc signed (no Apple developer team) may fail to store Firebase's install ID in the Keychain and then report nothing; iPhone/iPad builds and team-signed Mac builds are not affected.
 
 ## Roadmap
 
